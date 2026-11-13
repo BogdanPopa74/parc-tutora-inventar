@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Inventar parc Țuțora</title>
+<meta name="theme-color" content="#121712">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <header class="bar">
+    <button id="menuBtn" class="icon" type="button" aria-label="Meniu">☰</button>
+    <div class="title">
+      <strong id="parkName">CEF Țuțora</strong>
+      <span id="progress">0 / 0 panouri</span>
+    </div>
+    <button id="searchBtn" class="icon" type="button" aria-label="Caută o serie">⌕</button>
+  </header>
+  <div class="progressbar"><i id="progressFill"></i></div>
+
+  <main id="stage">
+    <canvas id="map" aria-label="Harta parcului"></canvas>
+
+    <section id="scanPanel" hidden aria-label="Scanare">
+      <div class="viewer" id="viewer">
+        <video id="video" playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <div class="reticle" id="reticle" hidden></div>
+        <div class="flash" id="flash"></div>
+        <div class="idle" id="idle">
+          <button id="camStart" type="button">Pornește camera</button>
+          <p id="camMsg">Sau scrie codul mai jos (merge și cu scanner Bluetooth).</p>
+        </div>
+      </div>
+      <div class="scanbody">
+        <div class="scanpos">
+          <span class="lbl" id="scanLbl">Poziția curentă</span>
+          <strong id="scanPos">—</strong>
+          <span class="msg" id="scanMsg" aria-live="polite"></span>
+        </div>
+        <div class="notice" id="scanNotice" hidden>
+          <span id="noticeText"></span>
+          <button id="noticeBtn" type="button"></button>
+        </div>
+        <form class="manual" id="scanManual" autocomplete="off">
+          <input id="scanInput" type="text" autocapitalize="characters" spellcheck="false" placeholder="Cod manual / Bluetooth" aria-label="Cod introdus manual">
+          <button type="submit">Adaugă</button>
+        </form>
+        <div class="scanctl" id="scanCtl">
+          <button id="dirBtn" type="button" title="Direcția de scanare">Spre est →</button>
+          <button id="orderBtn" type="button" title="Ordinea de scanare">Sus-jos</button>
+          <button id="skipBtn" type="button">Sari</button>
+          <button id="undoBtn" type="button">Anulează</button>
+          <button id="torchBtn" type="button" aria-pressed="false" hidden>Lanternă</button>
+          <button id="scanDone" type="button" class="primary">Gata</button>
+        </div>
+        <div class="zoomrow" id="zoomRow" hidden>
+          <label for="camZoom" id="zoomLabel">Zoom 1.0×</label>
+          <input id="camZoom" type="range">
+        </div>
+      </div>
+    </section>
+
+    <div class="mapctl">
+      <div class="seg" role="group" aria-label="Mod de afișare">
+        <button id="modeProgres" type="button" aria-pressed="true">Progres</button>
+        <button id="modeInv" type="button" aria-pressed="false">Invertoare</button>
+      </div>
+    </div>
+    <div class="zoomctl">
+      <button id="zoomIn" type="button" aria-label="Mărește">+</button>
+      <button id="zoomOut" type="button" aria-label="Micșorează">−</button>
+      <button id="zoomFit" type="button" aria-label="Tot parcul">⤢</button>
+    </div>
+    <button id="scanFab" class="fab" type="button">Scanează</button>
+    <div class="placing" id="placing" hidden>
+      <span>Atinge harta acolo unde se află echipamentul.</span>
+      <button id="placeCancel" type="button">Renunță</button>
+    </div>
+
+    <aside id="sheet" hidden aria-label="Detalii">
+      <div class="sheethead">
+        <h2 id="sheetTitle"></h2>
+        <button id="sheetClose" class="icon" type="button" aria-label="Închide">×</button>
+      </div>
+      <div id="sheetBody"></div>
+    </aside>
+  </main>
+</div>
+<div class="toast" id="toast" hidden></div>
+<input id="importInput" type="file" accept="application/json,.json" hidden>
+<input id="fileInput" type="file" multiple hidden>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Test scanner panouri</title>
+<style>
+/* Layout: o singură coloană pentru telefon — cameră sus, ultimul cod mare dedesubt, lista la final. */
+:root {
+  --bg: #f3f5f1;
+  --surface: #ffffff;
+  --ink: #121712;
+  --muted: #566156;
+  --line: #d3dad0;
+  --ok: #156f36;
+  --ok-bg: #dff3e4;
+  --dup: #b3301a;
+  --dup-bg: #fbe3dd;
+  --reticle: #ffd60a;
+  --mono: ui-monospace, "Roboto Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e120f;
+    --surface: #171d18;
+    --ink: #eef2ec;
+    --muted: #9ba79c;
+    --line: #2c362d;
+    --ok: #58d088;
+    --ok-bg: #12301d;
+    --dup: #ff8169;
+    --dup-bg: #3a1710;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.4 var(--sans);
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+}
+.wrap {
+  max-width: 640px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+header.top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: 14px 0;
+}
+h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+.count { font: 600 15px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0; font-weight: 600; }
+
+button, .btn, select, input[type="text"] { font: inherit; color: inherit; }
+button, .btn {
+  min-height: 48px;
+  padding: 0 16px;
+  border-radius: 10px;
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  touch-action: manipulation;
+}
+button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+button.danger { color: var(--dup); }
+button[aria-pressed="true"] { background: var(--reticle); border-color: var(--reticle); color: #1a1a00; }
+button:disabled { opacity: 0.45; cursor: default; }
+:focus-visible { outline: 3px solid var(--reticle); outline-offset: 2px; }
+
+.banner {
+  background: var(--dup-bg);
+  color: var(--dup);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-weight: 600;
+}
+
+/* Camera */
+.viewer {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  max-height: 56vh;
+  background: #050705;
+  border-radius: 14px;
+  overflow: hidden;
+}
+.viewer video, .viewer canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.viewer video { object-fit: cover; }
+.viewer canvas { pointer-events: none; }
+.reticle {
+  position: absolute;
+  left: 7%; right: 7%; top: 33%; bottom: 33%;
+  border: 3px solid var(--reticle);
+  border-radius: 10px;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.38);
+  pointer-events: none;
+}
+.idle {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 20px; text-align: center;
+  color: #e9efe8; background: #050705;
+}
+.idle p { margin: 0; max-width: 30ch; color: #aab5aa; font-size: 14px; }
+.idle button { background: var(--reticle); border-color: var(--reticle); color: #1a1a00; min-width: 200px; }
+.flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+.flash.ok { background: #25c267; animation: flash 0.35s ease-out; }
+.flash.dup { background: #ff4a2b; animation: flash 0.6s ease-out; }
+@keyframes flash { from { opacity: 0.55; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .flash.ok, .flash.dup { animation-duration: 0.01s; } }
+
+.camrow { display: flex; flex-wrap: wrap; gap: 8px; }
+.camrow > * { flex: 1 1 110px; min-width: 0; }
+select {
+  min-height: 48px; border-radius: 10px; border: 1.5px solid var(--line);
+  background: var(--surface); padding: 0 10px; max-width: 100%;
+}
+.zoomrow { display: flex; align-items: center; gap: 12px; }
+.zoomrow label { font: 600 14px var(--mono); min-width: 9ch; font-variant-numeric: tabular-nums; }
+.zoomrow input { flex: 1; min-width: 0; height: 40px; accent-color: var(--ink); }
+
+/* Ultimul cod */
+.last {
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  min-height: 84px;
+  display: flex; flex-direction: column; justify-content: center; gap: 2px;
+}
+.last .note { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.last .code { font: 700 22px/1.25 var(--mono); overflow-wrap: anywhere; }
+.last.ok { background: var(--ok-bg); border-color: var(--ok); }
+.last.ok .note { color: var(--ok); }
+.last.dup { background: var(--dup-bg); border-color: var(--dup); }
+.last.dup .note { color: var(--dup); }
+
+/* Introducere manuală */
+.manual { display: flex; gap: 8px; }
+.manual input {
+  flex: 1; min-width: 0; min-height: 48px; border-radius: 10px;
+  border: 1.5px solid var(--line); background: var(--surface);
+  padding: 0 12px; font-family: var(--mono);
+}
+.hint { margin: 0; font-size: 13px; color: var(--muted); }
+
+/* Listă */
+.listhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.actions > * { flex: 1 1 140px; }
+ol.scans { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1.5px solid var(--line); border-radius: 12px; overflow: hidden; }
+ol.scans li { display: flex; align-items: center; gap: 10px; padding: 8px 6px 8px 12px; border-top: 1px solid var(--line); }
+ol.scans li:first-child { border-top: 0; }
+.nr { font: 600 13px var(--mono); color: var(--muted); min-width: 4ch; text-align: right; font-variant-numeric: tabular-nums; }
+.item { flex: 1; min-width: 0; }
+.item .c { font: 600 15px var(--mono); overflow-wrap: anywhere; }
+.item .m { font-size: 12px; color: var(--muted); }
+button.del { min-height: 40px; min-width: 40px; padding: 0; border: 0; background: none; color: var(--muted); font-size: 20px; }
+.empty { padding: 18px 14px; color: var(--muted); font-size: 14px; }
+
+details { background: var(--surface); border: 1.5px solid var(--line); border-radius: 12px; padding: 0 14px; }
+summary { min-height: 48px; display: flex; align-items: center; font-weight: 600; cursor: pointer; }
+pre { font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 12px; color: var(--muted); }
+details button { margin-bottom: 14px; }
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  background: var(--ink); color: var(--bg);
+  padding: 10px 16px; border-radius: 999px; font-weight: 600; font-size: 14px;
+  max-width: calc(100vw - 32px);
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Test scanner panouri</h1>
+    <span class="count" id="count">0 coduri</span>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <section class="viewer" id="viewer" aria-label="Cameră">
+    <video id="video" playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <div class="reticle" id="reticle" hidden></div>
+    <div class="flash" id="flash"></div>
+    <div class="idle" id="idle">
+      <button id="startBtn" type="button">Pornește camera</button>
+      <p>Ține codul de bare în chenarul galben. Se citește singur, cu bip și vibrație.</p>
+    </div>
+  </section>
+
+  <div id="camControls" hidden>
+    <div class="camrow">
+      <button id="stopBtn" type="button">Oprește</button>
+      <button id="torchBtn" type="button" aria-pressed="false" hidden>Lanternă</button>
+      <select id="camSelect" aria-label="Alege camera" hidden></select>
+    </div>
+    <div class="zoomrow" id="zoomRow" hidden>
+      <label for="zoom" id="zoomLabel">Zoom 1.0×</label>
+      <input id="zoom" type="range">
+    </div>
+  </div>
+
+  <section class="last" id="last" aria-live="polite">
+    <span class="note" id="lastNote">Niciun cod încă</span>
+    <span class="code" id="lastCode">—</span>
+  </section>
+
+  <form class="manual" id="manualForm" autocomplete="off">
+    <input id="manualInput" type="text" inputmode="text" autocapitalize="characters" spellcheck="false"
+           placeholder="Cod manual / Bluetooth" aria-label="Cod introdus manual">
+    <button type="submit">Adaugă</button>
+  </form>
+  <div class="actions">
+    <label class="btn" id="photoBtn">Citește dintr-o poză
+      <input id="photoInput" type="file" accept="image/*" capture="environment" hidden>
+    </label>
+  </div>
+
+  <div class="listhead">
+    <h2>Coduri scanate</h2>
+  </div>
+  <ol class="scans" id="list"></ol>
+  <div class="actions">
+    <button id="undoBtn" type="button">Anulează ultimul</button>
+    <button id="copyBtn" type="button">Copiază tot</button>
+    <button id="csvBtn" type="button">Descarcă CSV</button>
+    <button id="clearBtn" type="button" class="danger">Șterge tot</button>
+  </div>
+
+  <details id="diagBox">
+    <summary>Diagnostic</summary>
+    <pre id="diag">—</pre>
+    <button id="diagCopy" type="button">Copiază diagnosticul</button>
+  </details>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---- Setări -------------------------------------------------------------
+  const WANTED = ['code_128', 'code_39', 'code_93', 'codabar', 'itf', 'ean_13', 'ean_8',
+                  'upc_a', 'upc_e', 'qr_code', 'data_matrix', 'pdf417', 'aztec'];
+  const RETICLE = { w: 0.86, h: 0.34 };   // chenarul, ca fracție din imaginea vizibilă (la fel ca în CSS)
+  const CONFIRM_FRAMES = 2;               // același cod în 2 cadre la rând = citire validă
+  const CONFIRM_WINDOW = 700;             // ms între cele două cadre
+  const HOLD_MS = 2500;                   // cât timp ignorăm codul abia citit, dacă e încă în chenar
+  const STORE = 'scanner-test-v1';
+
+  const $ = (id) => document.getElementById(id);
+  const video = $('video'), overlay = $('overlay'), viewer = $('viewer');
+
+  // ---- Stare --------------------------------------------------------------
+  let scans = [];
+  let prefs = {};
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE) || '{}');
+    if (Array.isArray(saved.scans)) scans = saved.scans;
+    if (saved.prefs) prefs = saved.prefs;
+  } catch (e) { /* fără stocare: mergem doar în memorie */ }
+
+  function save() {
+    try { localStorage.setItem(STORE, JSON.stringify({ scans, prefs })); } catch (e) { /* ignorăm */ }
+  }
+
+  let detector = null, formats = [];
+  let stream = null, track = null, caps = {};
+  let running = false, wakeLock = null;
+  let pending = { code: null, n: 0, t: 0 };
+  let held = { code: null, seen: 0 };
+  const stats = { ms: 0, frames: 0, fps: 0, lastTick: performance.now(), inFrame: [], error: '' };
+
+  // ---- Semnale ------------------------------------------------------------
+  let audio = null;
+  function beep(kind) {
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      if (audio.state === 'suspended') audio.resume();
+      const tones = kind === 'ok' ? [[1250, 0, 0.09]] : [[330, 0, 0.16], [330, 0.22, 0.16]];
+      for (const [freq, at, len] of tones) {
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.type = 'square'; o.frequency.value = freq;
+        g.gain.value = 0.15;
+        o.connect(g); g.connect(audio.destination);
+        o.start(audio.currentTime + at); o.stop(audio.currentTime + at + len);
+      }
+    } catch (e) { /* fără sunet */ }
+    try { navigator.vibrate && navigator.vibrate(kind === 'ok' ? 60 : [90, 70, 90]); } catch (e) { /* fără vibrație */ }
+  }
+
+  function signal(kind, code, note) {
+    const last = $('last');
+    last.classList.remove('ok', 'dup');
+    if (kind === 'ok' || kind === 'dup') last.classList.add(kind);
+    $('lastNote').textContent = note;
+    $('lastCode').textContent = code;
+    if (kind === 'ok' || kind === 'dup') {
+      const flash = $('flash');
+      flash.className = 'flash';
+      void flash.offsetWidth;            // repornește animația
+      flash.classList.add(kind);
+      beep(kind);
+    }
+  }
+
+  let toastTimer = 0;
+  function toast(text) {
+    const t = $('toast');
+    t.textContent = text; t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.hidden = true; }, 2200);
+  }
+
+  // ---- Listă --------------------------------------------------------------
+  function addScan(raw, format, src) {
+    const code = String(raw || '').trim();
+    if (!code) return 'empty';
+    const at = scans.findIndex((s) => s.code === code);
+    if (at >= 0) {
+      signal('dup', code, 'Dublură · deja la nr. ' + (at + 1));
+      return 'dup';
+    }
+    scans.push({ code, format, src, t: Date.now() });
+    save(); render();
+    signal('ok', code, 'Adăugat · nr. ' + scans.length);
+    return 'new';
+  }
+
+  const FORMAT_NAMES = { code_128: 'Code 128', code_39: 'Code 39', code_93: 'Code 93', codabar: 'Codabar',
+    itf: 'ITF', ean_13: 'EAN-13', ean_8: 'EAN-8', upc_a: 'UPC-A', upc_e: 'UPC-E', qr_code: 'QR',
+    data_matrix: 'Data Matrix', pdf417: 'PDF417', aztec: 'Aztec', manual: 'manual' };
+
+  function render() {
+    const n = scans.length;
+    $('count').textContent = n + (n === 1 ? ' cod' : ' coduri');
+    const list = $('list');
+    list.textContent = '';
+    if (!n) {
+      const li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = 'Lista e goală. Codurile citite apar aici, cel mai nou primul.';
+      list.appendChild(li);
+    }
+    for (let i = n - 1; i >= 0; i--) {
+      const s = scans[i];
+      const li = document.createElement('li');
+      const nr = document.createElement('span'); nr.className = 'nr'; nr.textContent = i + 1;
+      const item = document.createElement('div'); item.className = 'item';
+      const c = document.createElement('div'); c.className = 'c'; c.textContent = s.code;
+      const m = document.createElement('div'); m.className = 'm';
+      m.textContent = [FORMAT_NAMES[s.format] || s.format, s.src,
+        new Date(s.t).toLocaleTimeString('ro-RO')].filter(Boolean).join(' · ');
+      item.append(c, m);
+      const del = document.createElement('button');
+      del.type = 'button'; del.className = 'del'; del.textContent = '×';
+      del.setAttribute('aria-label', 'Șterge codul ' + s.code);
+      del.addEventListener('click', () => removeAt(i));
+      li.append(nr, item, del);
+      list.appendChild(li);
+    }
+    for (const id of ['undoBtn', 'copyBtn', 'csvBtn', 'clearBtn']) $(id).disabled = !n;
+  }
+
+  function removeAt(i) {
+    const [gone] = scans.splice(i, 1);
+    if (!gone) return;
+    if (held.code === gone.code) held = { code: null, seen: 0 };
+    save(); render();
+    signal('none', gone.code, 'Șters din listă');
+  }
+
+  $('undoBtn').addEventListener('click', () => removeAt(scans.length - 1));
+
+  let clearArmed = 0;
+  $('clearBtn').addEventListener('click', () => {
+    const btn = $('clearBtn');
+    if (Date.now() < clearArmed) {
+      scans = []; held = { code: null, seen: 0 }; clearArmed = 0;
+      btn.textContent = 'Șterge tot';
+      save(); render();
+      signal('none', '—', 'Lista a fost ștearsă');
+    } else {
+      clearArmed = Date.now() + 3500;
+      btn.textContent = 'Sigur? Apasă din nou';
+      setTimeout(() => { if (Date.now() >= clearArmed) btn.textContent = 'Șterge tot'; }, 3600);
+    }
+  });
+
+  function csvText() {
+    const esc = (v) => '"' + String(v).replace(/"/g, '""') + '"';
+    const rows = scans.map((s, i) => [i + 1, esc(s.code), esc(s.format), esc(s.src),
+      esc(new Date(s.t).toISOString())].join(','));
+    return ['nr,cod,format,sursa,ora'].concat(rows).join('\r\n');
+  }
+
+  $('copyBtn').addEventListener('click', async () => {
+    const text = scans.map((s) => s.code).join('\n');
+    try { await navigator.clipboard.writeText(text); toast('Copiat: ' + scans.length + ' coduri'); }
+    catch (e) { toast('Copierea nu a mers. Folosește „Descarcă CSV”.'); }
+  });
+
+  $('csvBtn').addEventListener('click', () => {
+    const d = new Date(), p = (x) => String(x).padStart(2, '0');
+    const name = 'scanari-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + '.csv';
+    const url = URL.createObjectURL(new Blob(['﻿' + csvText()], { type: 'text/csv' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  });
+
+  // ---- Introducere manuală / scanner Bluetooth ----------------------------
+  $('manualForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = $('manualInput');
+    if (addScan(input.value, 'manual', 'tastat') !== 'empty') input.value = '';
+  });
+
+  // ---- Poză ---------------------------------------------------------------
+  $('photoInput').addEventListener('change', async () => {
+    const input = $('photoInput');
+    const file = input.files && input.files[0];
+    input.value = '';
+    if (!file || !detector) return;
+    try {
+      const bmp = await createImageBitmap(file);
+      const found = await detector.detect(bmp);
+      if (bmp.close) bmp.close();
+      if (!found.length) signal('none', '—', 'Niciun cod găsit în poză');
+      for (const b of found) addScan(b.rawValue, b.format, 'poză');
+    } catch (e) {
+      signal('none', '—', 'Poza nu a putut fi citită');
+    }
+  });
+
+  // ---- Cameră -------------------------------------------------------------
+  function banner(text) {
+    const b = $('banner');
+    b.textContent = text || ''; b.hidden = !text;
+  }
+
+  function geometry() {
+    const cw = viewer.clientWidth, ch = viewer.clientHeight;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!cw || !ch || !vw || !vh) return null;
+    const scale = Math.max(cw / vw, ch / vh);          // object-fit: cover
+    const visW = cw / scale, visH = ch / scale;
+    const offX = (vw - visW) / 2, offY = (vh - visH) / 2;
+    const rw = visW * RETICLE.w, rh = visH * RETICLE.h;
+    return { cw, ch, scale, offX, offY,
+      cx: vw / 2, cy: vh / 2,
+      rx0: vw / 2 - rw / 2, rx1: vw / 2 + rw / 2, ry0: vh / 2 - rh / 2, ry1: vh / 2 + rh / 2 };
+  }
+
+  function centerOf(b) {
+    const pts = b.cornerPoints;
+    if (pts && pts.length) {
+      let x = 0, y = 0;
+      for (const p of pts) { x += p.x; y += p.y; }
+      return { x: x / pts.length, y: y / pts.length };
+    }
+    const r = b.boundingBox;
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  }
+
+  function draw(found, g, chosen) {
+    const dpr = window.devicePixelRatio || 1;
+    if (overlay.width !== Math.round(g.cw * dpr) || overlay.height !== Math.round(g.ch * dpr)) {
+      overlay.width = Math.round(g.cw * dpr); overlay.height = Math.round(g.ch * dpr);
+    }
+    const ctx = overlay.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, g.cw, g.ch);
+    for (const b of found) {
+      const r = b.boundingBox;
+      const pts = (b.cornerPoints && b.cornerPoints.length) ? b.cornerPoints
+        : [{ x: r.x, y: r.y }, { x: r.x + r.width, y: r.y }, { x: r.x + r.width, y: r.y + r.height }, { x: r.x, y: r.y + r.height }];
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const x = (p.x - g.offX) * g.scale, y = (p.y - g.offY) * g.scale;
+        if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+      });
+      ctx.closePath();
+      ctx.lineWidth = b === chosen ? 4 : 2;
+      ctx.strokeStyle = b === chosen ? '#35e07a' : 'rgba(255,255,255,0.75)';
+      ctx.stroke();
+    }
+  }
+
+  function handle(found) {
+    const g = geometry();
+    if (!g) return;
+    let chosen = null, best = Infinity;
+    for (const b of found) {
+      if (!b.rawValue) continue;
+      const c = centerOf(b);
+      if (c.x < g.rx0 || c.x > g.rx1 || c.y < g.ry0 || c.y > g.ry1) continue;   // în afara chenarului
+      const d = (c.x - g.cx) ** 2 + (c.y - g.cy) ** 2;
+      if (d < best) { best = d; chosen = b; }
+    }
+    draw(found, g, chosen);
+    stats.inFrame = found.map((b) => (FORMAT_NAMES[b.format] || b.format) + ': ' + b.rawValue);
+    if (!chosen) return;
+
+    const now = performance.now();
+    const code = chosen.rawValue;
+    if (code === held.code && now - held.seen < HOLD_MS) { held.seen = now; return; }
+    if (code === pending.code && now - pending.t < CONFIRM_WINDOW) pending.n++;
+    else pending = { code, n: 1, t: now };
+    pending.t = now;
+    if (pending.n >= CONFIRM_FRAMES) {
+      addScan(code, chosen.format, 'cameră');
+      held = { code, seen: now };
+      pending = { code: null, n: 0, t: 0 };
+    }
+  }
+
+  async function tick() {
+    if (!running) return;
+    if (video.readyState >= 2 && detector) {
+      const t0 = performance.now();
+      let found = [];
+      try { found = await detector.detect(video); stats.error = ''; }
+      catch (e) { stats.error = String(e && e.message || e); }
+      const dt = performance.now() - t0;
+      stats.ms = stats.ms ? stats.ms * 0.85 + dt * 0.15 : dt;
+      stats.frames++;
+      if (running) handle(found);
+    }
+    schedule();
+  }
+
+  function schedule() {
+    if (!running) return;
+    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(() => tick());
+    else setTimeout(tick, 60);
+  }
+
+  async function startCamera(deviceId) {
+    stopCamera();
+    banner('');
+    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      banner('Camera merge doar pe o adresă HTTPS. Deschide pagina de pe GitHub Pages.');
+      return;
+    }
+    const base = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+    const videoC = deviceId ? { ...base, deviceId: { exact: deviceId } } : { ...base, facingMode: { ideal: 'environment' } };
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: videoC });
+    } catch (e) {
+      if (deviceId) { prefs.deviceId = ''; save(); return startCamera(''); }
+      banner(e && e.name === 'NotAllowedError'
+        ? 'Camera e blocată. Apasă pe lacătul din bara de adrese, apoi Permisiuni → Cameră → Permite.'
+        : 'Camera nu a pornit: ' + (e && e.message || e));
+      return;
+    }
+    video.srcObject = stream;
+    try { await video.play(); } catch (e) { /* pornește la următorul gest */ }
+    track = stream.getVideoTracks()[0];
+    caps = (track.getCapabilities && track.getCapabilities()) || {};
+    if (caps.focusMode && caps.focusMode.includes('continuous')) {
+      track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+    }
+
+    const torchBtn = $('torchBtn');
+    torchBtn.hidden = !caps.torch;
+    torchBtn.setAttribute('aria-pressed', 'false');
+
+    const zoomRow = $('zoomRow'), zoom = $('zoom');
+    if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+      zoom.min = caps.zoom.min; zoom.max = caps.zoom.max; zoom.step = caps.zoom.step || 0.1;
+      const z = Math.min(caps.zoom.max, Math.max(caps.zoom.min, prefs.zoom || caps.zoom.min));
+      zoom.value = z; setZoom(z);
+      zoomRow.hidden = false;
+    } else zoomRow.hidden = true;
+
+    await fillCameras();
+    $('idle').hidden = true; $('reticle').hidden = false; $('camControls').hidden = false;
+    running = true;
+    pending = { code: null, n: 0, t: 0 };
+    schedule();
+    try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* opțional */ }
+  }
+
+  function stopCamera() {
+    running = false;
+    if (stream) for (const t of stream.getTracks()) t.stop();
+    stream = null; track = null; caps = {};
+    video.srcObject = null;
+    const ctx = overlay.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, overlay.width, overlay.height);
+    $('idle').hidden = false; $('reticle').hidden = true; $('camControls').hidden = true;
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  }
+
+  function setZoom(z) {
+    $('zoomLabel').textContent = 'Zoom ' + Number(z).toFixed(1) + '×';
+    if (track) track.applyConstraints({ advanced: [{ zoom: Number(z) }] }).catch(() => {});
+  }
+  $('zoom').addEventListener('input', (e) => { prefs.zoom = Number(e.target.value); setZoom(prefs.zoom); });
+  $('zoom').addEventListener('change', save);
+
+  $('torchBtn').addEventListener('click', async () => {
+    const btn = $('torchBtn');
+    const on = btn.getAttribute('aria-pressed') !== 'true';
+    try { await track.applyConstraints({ advanced: [{ torch: on }] }); btn.setAttribute('aria-pressed', String(on)); }
+    catch (e) { toast('Lanterna nu a putut fi comutată'); }
+  });
+
+  async function fillCameras() {
+    const sel = $('camSelect');
+    let cams = [];
+    try { cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput'); } catch (e) { /* fără listă */ }
+    sel.textContent = '';
+    const current = track && track.getSettings ? track.getSettings().deviceId : '';
+    cams.forEach((d, i) => {
+      const o = document.createElement('option');
+      o.value = d.deviceId; o.textContent = d.label || 'Camera ' + (i + 1);
+      if (d.deviceId === current) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.hidden = cams.length < 2;
+  }
+  $('camSelect').addEventListener('change', (e) => { prefs.deviceId = e.target.value; save(); startCamera(prefs.deviceId); });
+
+  $('startBtn').addEventListener('click', () => { beepUnlock(); startCamera(prefs.deviceId || ''); });
+  $('stopBtn').addEventListener('click', stopCamera);
+  document.addEventListener('visibilitychange', () => { if (document.hidden && running) stopCamera(); });
+
+  function beepUnlock() {
+    try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch (e) { /* fără sunet */ }
+  }
+
+  // ---- Diagnostic ---------------------------------------------------------
+  function diagText() {
+    const s = track && track.getSettings ? track.getSettings() : {};
+    const lines = [
+      'Cititor nativ (BarcodeDetector): ' + (detector ? 'da' : 'NU'),
+      'Formate: ' + (formats.join(', ') || '—'),
+      'Cameră: ' + (track ? (track.label || '?') + ' · ' + video.videoWidth + '×' + video.videoHeight : 'oprită'),
+      'Lanternă: ' + (caps.torch ? 'da' : 'nu') + ' · Zoom: ' + (caps.zoom ? caps.zoom.min + '–' + caps.zoom.max : 'nu')
+        + ' · Focus: ' + (s.focusMode || (caps.focusMode ? caps.focusMode.join('/') : '?')),
+      'Detectare: ' + (stats.ms ? stats.ms.toFixed(0) + ' ms/cadru · ' + stats.fps + ' cadre/s' : '—'),
+      'În cadru acum: ' + (stats.inFrame.length ? stats.inFrame.join(' | ') : 'nimic'),
+      stats.error ? 'Eroare: ' + stats.error : '',
+      'Coduri în listă: ' + scans.length,
+      navigator.userAgent,
+    ];
+    return lines.filter(Boolean).join('\n');
+  }
+  setInterval(() => {
+    const now = performance.now();
+    stats.fps = Math.round(stats.frames * 1000 / (now - stats.lastTick));
+    stats.frames = 0; stats.lastTick = now;
+    if ($('diagBox').open) $('diag').textContent = diagText();
+  }, 1000);
+  $('diagBox').addEventListener('toggle', () => { $('diag').textContent = diagText(); });
+  $('diagCopy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(diagText()); toast('Diagnostic copiat'); }
+    catch (e) { toast('Copierea nu a mers. Selectează textul manual.'); }
+  });
+
+  // ---- Pornire ------------------------------------------------------------
+  async function init() {
+    render();
+    try {
+      if ('BarcodeDetector' in window) {
+        const supported = await window.BarcodeDetector.getSupportedFormats();
+        formats = WANTED.filter((f) => supported.includes(f));
+        if (formats.length) detector = new window.BarcodeDetector({ formats });
+      }
+    } catch (e) { detector = null; }
+    if (!detector) {
+      banner('Browserul acesta nu are cititor de coduri de bare. Deschide pagina în Chrome pe Android. Poți totuși introduce coduri manual.');
+      $('startBtn').disabled = true;
+      $('photoBtn').hidden = true;
+    }
+  }
+  init();
+})();
+</script>
+</body>
+</html>
