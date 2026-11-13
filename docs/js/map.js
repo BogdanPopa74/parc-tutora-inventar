@@ -2,7 +2,8 @@
 import { PARC } from '../parc-data.js';
 import * as store from './store.js';
 
-export const INV_COLORS = ['#e6194b', '#f58231', '#b8960a', '#2e9e45', '#149c9c', '#3f63d8', '#8e24aa', '#d6409f', '#8a5a2b'];
+export const INV_COLORS = ['#e6194b', '#f58231', '#b8960a', '#2e9e45', '#149c9c', '#3f63d8', '#8e24aa', '#d6409f', '#8a5a2b',
+  '#5b6b7a', '#7cb518', '#c1121f', '#0077b6', '#6a4c93', '#bc6c25', '#2a9d8f'];
 export const invColor = (n) => INV_COLORS[(n - 1) % INV_COLORS.length] || '#777';
 
 const PANEL_MIN_PX = 5;      // sub această lățime a panoului desenăm doar masa, ca bloc

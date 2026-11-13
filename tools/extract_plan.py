@@ -188,7 +188,7 @@ def main(src, dst):
         source='Plan DWG exportat PDF, 7/2026, scara 1:1500',
         specs=dict(panouri=len(tables) * COLS * TIERS, mese=len(tables), randuri=tables[-1]['row'],
                    panouriPeMasa=COLS * TIERS, invertoare=len(inv_words),
-                   note='8 invertoare 330KTL + 1 invertor 200KTL, 1 PTAB, module min. 710 W, aranjare 2P, 30°, 6,5 m între rânduri'),
+                   note='În plan: 8 invertoare 330KTL + 1 invertor 200KTL, 1 PTAB, module min. 710 W, aranjare 2P, 30°, 6,5 m între rânduri'),
         cols=COLS, tiers=TIERS,
         width=mx(max(xs) + 10), height=my(max(ys) + 10),
         stereo70=dict(e0=round(710050 + (ox - 97.15) * M_PER_PT, 2), n0=round(628750 - (oy - 40.59) * M_PER_PT, 2)),

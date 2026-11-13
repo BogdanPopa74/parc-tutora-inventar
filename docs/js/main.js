@@ -6,7 +6,7 @@ import { createMap, invColor } from './map.js';
 import { createScanner, beep } from './scanner.js';
 
 const $ = (id) => document.getElementById(id);
-const VERSION = '2026-11-13.2';
+const VERSION = '2026-11-13.3';
 const TOTAL = PARC.tables.length * PARC.cols * PARC.tiers;
 const PER_TABLE = PARC.cols * PARC.tiers;
 const invName = (n) => 'INV' + String(n).padStart(2, '0');
@@ -50,6 +50,24 @@ const map = createMap($('map'), onMapTap);
 const scanner = createScanner({ video: $('video'), overlay: $('overlay'), viewer: $('viewer') }, (code) => handleCode(code, 'cameră'));
 let current = null;                 // fișa deschisă: { kind, id }
 let placing = null;                 // plasare echipament pe hartă: { type, name } sau { moveId }
+let assign = null;                  // atribuire de mese unui invertor: { n, eid, count }
+
+function showBar(text, label) {
+  $('placingText').textContent = text; $('placeCancel').textContent = label; $('placing').hidden = false;
+}
+function startAssign(e) {
+  assign = { n: e.n, eid: e.id, count: 0 };
+  closeSheet(); setMode('inv');
+  showBar('Atinge mesele care intră în ' + invName(e.n) + '.', 'Gata');
+}
+function assignTable(tid) {
+  const t = store.getTable(tid);
+  if (t.inv === assign.n) { toast(tid + ' este deja pe ' + invName(assign.n)); return; }
+  const used = store.tablesOfInverter(assign.n).map((x) => x.str);
+  store.setTable(tid, { inv: assign.n, str: Math.max(0, ...used) + 1 });
+  assign.count++;
+  showBar(invName(assign.n) + ': ' + assign.count + (assign.count === 1 ? ' masă mutată' : ' mese mutate') + '. Atinge următoarea.', 'Gata');
+}
 
 function updateInsets() {
   const sheet = $('sheet'), sp = $('scanPanel');
@@ -64,6 +82,11 @@ function updateProgress() {
 }
 
 function onMapTap(hit) {
+  if (assign) {
+    const tid = hit.kind === 'table' ? hit.id : hit.kind === 'panel' ? hit.tableId : null;
+    if (tid) assignTable(tid);
+    return;
+  }
   if (placing) {
     if (placing.moveId) { store.setEquip(placing.moveId, { x: hit.x, y: hit.y }); openEquip(placing.moveId); }
     else openEquip(store.addEquip(placing.type, placing.name, hit.x, hit.y));
@@ -181,11 +204,13 @@ function openEquip(eid, keepView) {
   if (e.type === 'inv' && e.n) {
     const list = store.tablesOfInverter(e.n);
     const done = list.reduce((a, t) => a + store.tableProgress(t.id), 0);
-    nodes.push(h('h3', {}, 'Stringuri: ' + list.length + ' · panouri scanate ' + done + ' din ' + list.length * PER_TABLE),
+    nodes.push(h('button', { type: 'button', onclick: () => startAssign(e) }, 'Alege pe hartă mesele acestui invertor'),
+      h('h3', {}, 'Stringuri: ' + list.length + ' · panouri scanate ' + done + ' din ' + list.length * PER_TABLE),
       h('ul', { class: 'list' }, list.map((t) => h('li', {},
         h('span', { class: 'swatch', style: 'background:' + invColor(e.n) }),
         h('button', { type: 'button', class: 'link', onclick: () => openTable(t.id) }, 'String ' + t.str + ' · ' + t.id),
         h('small', {}, store.tableProgress(t.id) + '/' + PER_TABLE)))));
+    if (!list.length) nodes.pop();                 // fără listă goală
   }
 
   // Informații suplimentare: perechi „denumire – valoare” adăugate liber
@@ -221,8 +246,11 @@ function openEquip(eid, keepView) {
     : io.folderSupported ? 'Ca fișierele să ajungă într-un folder de pe calculator, alege folderul din Meniu.' : 'Fișierele se păstrează în aplicație, pe acest dispozitiv.'));
   if (e.custom) {
     nodes.push(h('div', { class: 'btns' },
-      h('button', { type: 'button', onclick: () => { placing = { moveId: eid }; $('placing').hidden = false; closeSheet(); } }, 'Mută pe hartă'),
-      confirmButton('Șterge echipamentul', 'Sigur? Apasă din nou', () => { store.setEquip(eid, { deleted: true }); closeSheet(); })));
+      h('button', { type: 'button', onclick: () => { placing = { moveId: eid }; closeSheet(); showBar('Atinge harta acolo unde se află echipamentul.', 'Renunță'); } }, 'Mută pe hartă'),
+      confirmButton('Șterge echipamentul', 'Sigur? Apasă din nou', () => {
+        if (e.type === 'inv' && e.n && store.tablesOfInverter(e.n).length) { toast('Mută întâi mesele pe alt invertor.'); return; }
+        store.setEquip(eid, { deleted: true }); closeSheet();
+      })));
   }
   openSheet(e.name, nodes, { kind: 'equip', id: eid });
   if (!keepView) map.centerOn(e.x + (e.w || 0) / 2, e.y + (e.h || 0) / 2);
@@ -265,17 +293,21 @@ function openEquipList() {
 
 function openAddEquip() {
   const type = h('select', {}, ['baterie', 'ptab', 'inv', 'tablou', 'altul'].map((t) => h('option', { value: t }, io.TYPE_NAMES[t])));
-  const name = h('input', { type: 'text', placeholder: 'ex. Baterie 1' });
+  const name = h('input', { type: 'text', placeholder: 'ex. Baterie 1 (invertoarele se numerotează singure)' });
   openSheet('Adaugă echipament', [
     field('Tip', type), field('Nume', name),
     h('p', { class: 'muted' }, 'După ce apeși butonul, atinge harta în locul unde se află echipamentul.'),
     h('button', { type: 'button', class: 'primary', onclick: () => {
       placing = { type: type.value, name: name.value.trim() || io.TYPE_NAMES[type.value] };
-      closeSheet(); $('placing').hidden = false;
+      closeSheet(); showBar('Atinge harta acolo unde se află echipamentul.', 'Renunță');
     } }, 'Alege locul pe hartă'),
   ], { kind: 'addEquip' });
 }
-$('placeCancel').addEventListener('click', () => { placing = null; $('placing').hidden = true; });
+$('placeCancel').addEventListener('click', () => {
+  const done = assign;
+  placing = null; assign = null; $('placing').hidden = true;
+  if (done) openEquip(done.eid);
+});
 
 function openSearch() {
   const results = h('ul', { class: 'list' });

@@ -9,7 +9,7 @@ export const TYPE_NAMES = { ptab: 'PTAB / STS', inv: 'Invertor', stalp: 'Stâlp 
 // Câmpurile fixe ale fiecărui tip de echipament; restul se adaugă cu „Adaugă informație”.
 export const FIELDS = {
   ptab: [['serie', 'Serie', true], ['producator', 'Producător'], ['model', 'Model'], ['putere', 'Putere (kVA)']],
-  inv: [['serie', 'Serie', true], ['producator', 'Producător'], ['model', 'Model (330KTL / 200KTL)'], ['putere', 'Putere (kW)']],
+  inv: [['serie', 'Serie', true], ['producator', 'Producător'], ['model', 'Model'], ['putere', 'Putere (kW)']],
   stalp: [['serieBL', 'Serie cutie de comutare (BL)', true], ['serieCam1', 'Serie cameră 1', true], ['serieCam2', 'Serie cameră 2', true]],
   racord: [['serie', 'Serie / identificare', true]],
   baterie: [['serie', 'Serie', true], ['producator', 'Producător'], ['model', 'Model'], ['capacitate', 'Capacitate (kWh)']],

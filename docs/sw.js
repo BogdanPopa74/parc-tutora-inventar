@@ -1,5 +1,5 @@
 // Service worker: ține aplicația în cache ca să pornească și fără semnal în parc.
-const CACHE = 'parc-inventar-v2';
+const CACHE = 'parc-inventar-v3';
 const FILES = ['./', 'index.html', 'app.css', 'parc-data.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
   'js/main.js', 'js/store.js', 'js/map.js', 'js/scanner.js', 'js/io.js', 'js/xlsx.js', 'test-scanner.html'];
 

@@ -147,7 +147,12 @@ export function setEquip(eid, patch) {
 }
 export function addEquip(type, name, x, y) {
   const eid = 'X' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-  setEquip(eid, { custom: true, type, name, x, y });
+  const rec = { custom: true, type, name, x, y };
+  if (type === 'inv') {                            // invertoarele noi primesc următorul număr liber
+    rec.n = Math.max(0, ...inverterNumbers()) + 1;
+    rec.name = 'Invertor ' + String(rec.n).padStart(2, '0');
+  }
+  setEquip(eid, rec);
   return eid;
 }
 export function inverterNumbers() {
