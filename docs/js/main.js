@@ -4,9 +4,11 @@ import * as store from './store.js';
 import * as io from './io.js';
 import { createMap, invColor } from './map.js';
 import { createScanner, beep } from './scanner.js';
+import * as sync from './sync.js';
+import { createDataView } from './dataview.js';
 
 const $ = (id) => document.getElementById(id);
-const VERSION = '2026-11-13.3';
+let VERSION = '';                   // vine din sw.js (numele cache-ului), ca să existe un singur loc de schimbat
 const TOTAL = PARC.tables.length * PARC.cols * PARC.tiers;
 const PER_TABLE = PARC.cols * PARC.tiers;
 const invName = (n) => 'INV' + String(n).padStart(2, '0');
@@ -105,8 +107,23 @@ function onMapTap(hit) {
   else closeSheet();
 }
 
+// Butonul „Înapoi” al telefonului închide ce e deschis (tabel, scanare, fișă), nu aplicația.
+let backArmed = false;
+function armBack() {
+  if (backArmed) return;
+  try { history.pushState({ overlay: 1 }, ''); backArmed = true; } catch (e) { /* fără istoric */ }
+}
+window.addEventListener('popstate', () => {
+  backArmed = false;
+  if (dataView.isOpen) dataView.close();
+  else if (scan.active) stopScan();
+  else if (!$('sheet').hidden) closeSheet();
+  if (dataView.isOpen || scan.active || !$('sheet').hidden) armBack();
+});
+
 // ---- Fișa de detalii ---------------------------------------------------------
 function openSheet(title, nodes, sel) {
+  armBack();
   const body = $('sheetBody'), same = current && sel && current.kind === sel.kind && current.id === sel.id;
   const scroll = same ? body.scrollTop : 0;
   $('sheetTitle').textContent = title;
@@ -132,6 +149,7 @@ function reopen() {
   else if (kind === 'equip') openEquip(id, true);
   else if (kind === 'menu') openMenu();
   else if (kind === 'equipList') openEquipList();
+  else if (kind === 'sync') openSync();
 }
 
 function field(label, control) { return h('label', { class: 'field' }, h('span', {}, label), control); }
@@ -151,7 +169,7 @@ function openPanel(pid, keepView) {
       h('dt', {}, 'Poziție'), h('dd', {}, (tier === 0 ? 'sus' : 'jos') + ', panoul ' + (col + 1) + ' din ' + PARC.cols),
       h('dt', {}, 'Invertor'), h('dd', {}, invName(t.inv) + ', string ' + t.str)),
     field('Serie panou', input),
-    rec.sn ? h('p', { class: 'muted' }, 'Scanat ' + new Date(rec.t).toLocaleString('ro-RO') + (rec.src ? ' · ' + rec.src : '')) : null,
+    rec.sn ? h('p', { class: 'muted' }, 'Scanat ' + new Date(rec.t).toLocaleString('ro-RO') + (rec.src ? ' · ' + rec.src : '') + (rec.by ? ' · de ' + rec.by : '')) : null,
     h('div', { class: 'btns' },
       h('button', { type: 'button', class: 'primary', onclick: () => startScan(pid) }, 'Scanează de aici'),
       h('button', { type: 'button', onclick: () => openTable(tableId) }, 'Vezi masa'),
@@ -192,6 +210,9 @@ function openEquip(eid, keepView) {
   if (!e || e.deleted) { closeSheet(); return; }
   const save = (patch) => store.setEquip(eid, patch);
   const nodes = [h('p', { class: 'muted' }, io.TYPE_NAMES[e.type] || 'Echipament')];
+  if (e.plan && e.plan.length) {
+    nodes.push(h('h3', {}, 'Din plan'), h('dl', { class: 'kv' }, e.plan.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])));
+  }
   if (e.custom) {
     const name = h('input', { type: 'text', value: e.name || '', onchange: () => { save({ name: name.value.trim() || 'Echipament' }); $('sheetTitle').textContent = name.value.trim() || 'Echipament'; } });
     nodes.push(field('Nume', name));
@@ -257,10 +278,15 @@ function openEquip(eid, keepView) {
 }
 
 async function openFile(f) {
-  const blob = await store.getBlob(f.id);
-  if (!blob) { toast('Fișierul nu se află pe acest dispozitiv.'); return; }
-  const url = URL.createObjectURL(blob);
-  const a = h('a', { href: url, target: '_blank', rel: 'noopener' });
+  let blob = await store.getBlob(f.id);
+  if (!blob && f.up && sync.state.on) { toast('Se descarcă fișierul…'); blob = await sync.fetchFile(f).catch(() => null); }
+  if (!blob) { toast(f.up ? 'Fișierul nu a putut fi descărcat. Verifică internetul.' : 'Fișierul nu a ajuns încă de pe dispozitivul pe care a fost adăugat.'); return; }
+  // Doar PDF-urile și pozele se deschid direct, și doar pe calculator; orice altceva se descarcă,
+  // ca un fișier primit de la alt dispozitiv să nu poată rula cod în aplicație.
+  const type = /^(application\/pdf|image\/(png|jpeg|gif|webp))$/.test(blob.type) ? blob.type : 'application/octet-stream';
+  const inline = type !== 'application/octet-stream' && !matchMedia('(pointer: coarse)').matches;
+  const url = URL.createObjectURL(new Blob([blob], { type }));
+  const a = inline ? h('a', { href: url, target: '_blank', rel: 'noopener' }) : h('a', { href: url, download: f.name || 'fisier' });
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
@@ -343,11 +369,21 @@ function openMenu() {
     h('p', { class: 'muted' }, 'Scanate: ' + n + ' (' + (100 * n / TOTAL).toFixed(1) + '%). ' + PARC.specs.note + '.'),
     !store.persistent ? h('div', { class: 'banner' }, 'Browserul nu permite salvarea pe dispozitiv (fereastră privată?). Datele se pierd la închidere.') : null,
     h('div', { class: 'btns' },
+      h('button', { type: 'button', onclick: () => { closeSheet(); dataView.open(); armBack(); } }, 'Tabel cu date'),
       h('button', { type: 'button', onclick: openEquipList }, 'Echipamente'),
       h('button', { type: 'button', onclick: openAddEquip }, 'Adaugă echipament'),
       h('button', { type: 'button', onclick: () => { io.download(io.workbook(), 'Inventar parc ' + io.fileStamp() + '.xlsx'); } }, 'Descarcă Excel')),
-    h('h3', {}, 'Transfer între telefon și calculator'),
-    h('p', { class: 'muted' }, 'Trimite datele de pe telefon (WhatsApp, e-mail, Drive, cablu), apoi importă fișierul pe calculator. La import se păstrează, pentru fiecare panou, varianta cea mai nouă.'),
+    h('h3', {}, 'Date live între dispozitive'),
+    sync.state.on
+      ? h('div', { class: sync.state.status === 'error' ? 'banner' : 'okbox' }, syncLine())
+      : h('p', { class: 'muted' }, 'Pornește sincronizarea ca scanările de pe telefon să apară singure pe laptop și pe celelalte telefoane.'),
+    h('div', { class: 'btns' }, h('button', { type: 'button', class: sync.state.on ? '' : 'primary', onclick: () => openSync() }, sync.state.on ? 'Setări sincronizare' : 'Pornește sincronizarea')),
+    h('h3', {}, 'Instalare pe telefon'),
+    standalone ? h('p', { class: 'muted' }, 'Aplicația este instalată pe acest dispozitiv.')
+      : installEvent ? h('div', { class: 'btns' }, h('button', { type: 'button', class: 'primary', onclick: async () => { const ev = installEvent; installEvent = null; ev.prompt(); await ev.userChoice.catch(() => {}); openMenu(); } }, 'Instalează aplicația'))
+        : h('p', { class: 'muted' }, 'În Chrome, deschide meniul ⋮ și alege „Instalează aplicația” sau „Adaugă pe ecranul de pornire”. Apare ca o aplicație obișnuită și pornește și fără semnal.'),
+    h('h3', {}, 'Transfer manual, prin fișier'),
+    h('p', { class: 'muted' }, 'Fără sincronizare: trimite datele de pe telefon (WhatsApp, e-mail, Drive, cablu), apoi importă fișierul pe calculator. La import se păstrează, pentru fiecare panou, varianta cea mai nouă.'),
   ];
   const withFiles = h('input', { type: 'checkbox', checked: true, style: 'width:22px;height:22px;min-height:0' });
   nodes.push(h('label', { class: 'row' }, withFiles, h('span', {}, 'Include fișierele atașate')),
@@ -379,9 +415,112 @@ function openMenu() {
   nodes.push(h('h3', {}, 'Altele'), h('div', { class: 'btns' },
     h('a', { class: 'btn', href: 'test-scanner.html' }, 'Test scanner'),
     h('button', { type: 'button', onclick: () => { map.fit(); closeSheet(); } }, 'Arată tot parcul')),
-  h('p', { class: 'muted' }, 'Harta: ' + PARC.source + '. Versiunea aplicației: ' + VERSION + '.'));
+  h('p', { class: 'muted' }, 'Harta: ' + PARC.source + '.' + (VERSION ? ' Versiunea aplicației: ' + VERSION + '.' : '')));
   openSheet('Meniu', nodes, { kind: 'menu' });
 }
+
+// ---- Sincronizare live -------------------------------------------------------
+let installEvent = null;
+const standalone = matchMedia('(display-mode: standalone)').matches;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; if (current && current.kind === 'menu') openMenu(); });
+window.addEventListener('appinstalled', () => { installEvent = null; toast('Aplicația a fost instalată'); });
+
+function syncLine() {
+  const st = sync.state;
+  if (st.status === 'error' || st.status === 'offline') return st.error + (st.pending ? ' De trimis: ' + st.pending + (st.pending === 1 ? ' fișier de date.' : ' fișiere de date.') : '');
+  const at = st.lastSync ? ' Ultima sincronizare: ' + new Date(st.lastSync).toLocaleTimeString('ro-RO') + '.' : ' Se sincronizează…';
+  return 'Conectat la ' + st.repo + '.' + at + (st.pending ? ' De trimis: ' + st.pending + '.' : '');
+}
+
+function updatePill() {
+  const pill = $('syncPill'), st = sync.state;
+  pill.hidden = !st.on;
+  if (!st.on) return;
+  const kind = st.status === 'error' ? 'err' : st.status === 'offline' ? 'off' : st.pending ? 'wait' : 'ok';
+  pill.className = 'pill ' + kind;
+  pill.textContent = kind === 'err' ? 'eroare' : kind === 'off' ? 'offline' + (st.pending ? ' · ' + st.pending : '') : kind === 'wait' ? 'se trimite' : 'live';
+  pill.title = syncLine();
+}
+
+async function saveDeviceName(name) {
+  name = String(name || '').trim().slice(0, 40);
+  if (!name) return;
+  store.setDeviceName(name);
+  await store.kvSet('device', { name });
+}
+
+let syncBox = null;                 // caseta de stare din fișa de sincronizare, actualizată pe loc
+function openSync(prefill) {
+  const st = sync.state;
+  const name = h('input', { type: 'text', value: store.deviceName, placeholder: 'ex. Telefon Ion, Laptop birou', onchange: () => saveDeviceName(name.value) });
+  const nodes = [];
+  const run = async (btn, repo, token) => {
+    btn.disabled = true;
+    try {
+      await saveDeviceName(name.value);
+      const info = await sync.connect(repo, token);
+      toast('Conectat. Datele se sincronizează.');
+      if (!info.private) toast('Atenție: depozitul de date este public.');
+      openSync();
+    } catch (e) { btn.disabled = false; err.textContent = String(e && e.message || e); err.hidden = false; }
+  };
+  const err = h('div', { class: 'banner', hidden: true });
+  if (st.on) {
+    syncBox = h('div', { class: st.status === 'error' ? 'banner' : 'okbox' }, syncLine());
+    nodes.push(syncBox);
+    if (st.skipped.length) nodes.push(h('div', { class: 'banner' }, 'Prea mari pentru sincronizare (peste 25 MB), rămân doar pe acest dispozitiv: ' + st.skipped.join(', ')));
+    nodes.push(field('Numele acestui dispozitiv', name),
+      h('p', { class: 'muted' }, 'Numele apare lângă fiecare scanare, ca să se vadă cine a scanat.'),
+      h('div', { class: 'btns' },
+        h('button', { type: 'button', class: 'primary', onclick: async () => { await sync.syncNow(true); openSync(); } }, 'Sincronizează acum'),
+        h('button', { type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(sync.connectLink()); toast('Link copiat. Trimite-l pe telefon.'); } catch (e) { link.hidden = false; link.select(); } } }, 'Copiază linkul pentru alt dispozitiv')));
+    const link = h('textarea', { readonly: true, hidden: true, class: 'mono', 'aria-label': 'Link de conectare' });
+    link.value = sync.connectLink();
+    nodes.push(link,
+      h('p', { class: 'muted' }, 'Deschide linkul pe telefon (trimis pe WhatsApp sau e-mail) și telefonul se conectează singur. Dă-l doar oamenilor care scanează: cine are linkul poate modifica datele.'),
+      h('div', { class: 'btns' }, confirmButton('Deconectează acest dispozitiv', 'Sigur? Apasă din nou', async () => { await sync.disconnect(); openSync(); })));
+  } else if (prefill) {
+    const go = h('button', { type: 'button', class: 'primary', onclick: () => run(go, prefill.repo, prefill.token) }, 'Conectează');
+    nodes.push(h('p', {}, 'Ai primit un link de conectare pentru depozitul ' + prefill.repo + '.'),
+      field('Numele acestui dispozitiv', name), err, h('div', { class: 'btns' }, go));
+  } else {
+    const code = h('textarea', { class: 'mono', placeholder: 'PARC1.…', 'aria-label': 'Cod sau link de conectare' });
+    const goCode = h('button', { type: 'button', class: 'primary', onclick: () => {
+      const c = sync.parseCode(code.value);
+      if (!c) { err.textContent = 'Codul nu este valid. Copiază tot linkul primit.'; err.hidden = false; return; }
+      run(goCode, c.repo, c.token);
+    } }, 'Conectează cu linkul');
+    const repo = h('input', { type: 'text', placeholder: 'utilizator/parc-tutora-date', spellcheck: 'false', autocapitalize: 'none' });
+    const token = h('input', { type: 'text', class: 'mono', placeholder: 'github_pat_…', spellcheck: 'false', autocapitalize: 'none', autocomplete: 'off' });
+    const go = h('button', { type: 'button', onclick: () => run(go, repo.value, token.value) }, 'Conectează cu token');
+    nodes.push(
+      h('p', {}, 'Cu sincronizarea pornită, ce se scanează pe telefon apare în câteva secunde pe laptop și pe celelalte telefoane. Fără semnal, scanările rămân pe telefon și pleacă singure când revine internetul.'),
+      field('Numele acestui dispozitiv', name), err,
+      h('h3', {}, 'Am primit un link de conectare'),
+      code, h('div', { class: 'btns' }, goCode),
+      h('h3', {}, 'Prima configurare (o singură dată)'),
+      h('p', { class: 'muted' }, 'Datele se țin într-un depozit privat de pe GitHub. Creează un depozit privat (de exemplu parc-tutora-date, cu „Add a README” bifat), apoi un token „fine-grained” cu acces doar la acel depozit și permisiunea Contents: Read and write.'),
+      field('Depozitul de date', repo), field('Token GitHub', token),
+      h('div', { class: 'btns' }, go));
+  }
+  openSheet('Sincronizare', nodes, { kind: 'sync' });
+}
+$('syncPill').addEventListener('click', () => openSync());
+sync.onStatus((st) => {
+  updatePill();
+  if (current && current.kind === 'sync' && syncBox && syncBox.isConnected && st.status !== 'syncing') {
+    syncBox.className = st.status === 'error' ? 'banner' : 'okbox';
+    syncBox.textContent = syncLine();
+  }
+});
+
+// ---- Tabelul cu date ---------------------------------------------------------
+const dataView = createDataView($('dataView'), {
+  onPanel: (pid) => { dataView.close(); openPanel(pid); map.showPanel(pid, map.panelScale()); },
+  onEquip: (eid) => { dataView.close(); openEquip(eid); },
+});
+$('dataBtn').addEventListener('click', () => { if (dataView.isOpen) dataView.close(); else { closeSheet(); dataView.open(); armBack(); } });
+$('dvClose').addEventListener('click', () => dataView.close());
 
 async function connect(reuse) {
   try {
@@ -444,6 +583,7 @@ $('noticeBtn').addEventListener('click', () => { const a = noticeAction; clearNo
 
 function setCursor(pid) {
   scan.cursor = pid; map.state.cursor = pid;
+  if (pid && !scan.target) store.kvSet('lastCursor', { pid, firstTier: scan.firstTier });
   $('scanPos').textContent = pid || 'alege pe hartă';
   if (pid) map.showPanel(pid, map.panelScale()); else map.invalidate();
 }
@@ -477,14 +617,19 @@ function stopCamera() {
 
 async function startScan(pid, target) {
   closeSheet();
+  armBack();
   scan.active = true; scan.target = target || null; scan.history = [];
   $('scanPanel').hidden = false; $('scanFab').hidden = true;
   clearNotice(); scanMsg('', '');
   updateScanUi();
   updateInsets();
   if (!scan.target) {
+    const last = pid ? null : await store.kvGet('lastCursor');
     if (pid) { scan.firstTier = store.parsePanel(pid).tier; setCursor(pid); }
-    else { setCursor(null); scanMsg('', 'Atinge pe hartă panoul de la care începi.'); }
+    else if (last && last.pid && store.baseTables.has(last.pid.slice(0, 7))) {
+      scan.firstTier = last.firstTier === 1 ? 1 : 0; setCursor(last.pid);
+      scanMsg('', 'Continui de unde ai rămas. Atinge alt panou pe hartă ca să schimbi locul.');
+    } else { setCursor(null); scanMsg('', 'Atinge pe hartă panoul de la care începi.'); }
   }
   if (await scanner.ready) await startCamera();
   else { $('camMsg').textContent = 'Acest browser nu are cititor de coduri. Scrie codul mai jos sau folosește un scanner Bluetooth / USB.'; $('camStart').hidden = true; if (isWide()) $('scanInput').focus(); }
@@ -602,7 +747,9 @@ let saveTimer = 0;
 store.onChange((what) => {
   updateProgress(); map.invalidate();
   const typing = document.activeElement && $('sheet').contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
-  if (what === 'import' || (!typing && current && (current.kind === 'panel' || current.kind === 'table') && what === 'panels')) reopen();
+  const viewing = current && ['panel', 'table', 'equip', 'equipList', 'menu'].includes(current.kind);
+  if (what === 'import' || (!typing && what === 'sync' && viewing)
+    || (!typing && current && (current.kind === 'panel' || current.kind === 'table') && what === 'panels')) reopen();
   if (io.folderConnected()) {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => { await io.syncFolder(); if (current && current.kind === 'menu') openMenu(); if (io.folder.error) toast('Salvarea în folder a eșuat'); }, 1200);
@@ -613,12 +760,32 @@ store.onChange((what) => {
   await store.init();
   const prefs = await store.kvGet('scanPrefs');
   if (prefs) { scan.dir = prefs.dir === -1 ? -1 : 1; scan.order = prefs.order === 'row' ? 'row' : 'col'; }
+  const dev = await store.kvGet('device');
+  store.setDeviceName(dev && dev.name ? dev.name : (matchMedia('(pointer: coarse)').matches ? 'Telefon ' : 'Laptop ') + Math.floor(100 + Math.random() * 900));
+  if (!dev || !dev.name) await store.kvSet('device', { name: store.deviceName });
   try { await io.restoreFolder(); } catch (e) { /* fără folder */ }
+  io.setBlobFetcher((f) => (sync.state.on && f.up ? sync.fetchFile(f).catch(() => null) : null));
+  try { await sync.restore(); } catch (e) { /* fără sincronizare */ }
+  updatePill();
+  const pair = location.hash.match(/^#conectare=(.+)$/);
+  if (pair) {                                       // link de conectare primit de la alt dispozitiv
+    history.replaceState(null, '', location.pathname + location.search);
+    const c = sync.parseCode(decodeURIComponent(pair[1]));
+    if (!c) toast('Linkul de conectare nu este valid');
+    else if (sync.state.on && sync.state.repo === c.repo) toast('Dispozitivul este deja conectat');
+    else openSync(c);
+  }
   $('parkName').textContent = PARC.name;
   updateProgress(); updateInsets(); map.fit();
   if (io.folder.needsPermission) toast('Folderul „' + io.folder.name + '” trebuie reconectat din Meniu');
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+    const had = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (had) toast('Versiune nouă instalată. Se aplică la următoarea deschidere a aplicației.'); });
     navigator.serviceWorker.register('sw.js').catch(() => {});
+    try {
+      const key = (await caches.keys()).filter((k) => k.startsWith('parc-inventar-')).sort().pop();
+      if (key) VERSION = key.slice('parc-inventar-'.length);
+    } catch (e) { /* fără cache */ }
   }
-  window.__app = { store, map, scan, io, handleCode };       // pentru depanare din consolă
+  window.__app = { store, map, scan, io, sync, handleCode };       // pentru depanare din consolă
 })();

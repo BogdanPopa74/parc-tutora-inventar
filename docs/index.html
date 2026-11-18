@@ -17,7 +17,9 @@
       <strong id="parkName">CEF Țuțora</strong>
       <span id="progress">0 / 0 panouri</span>
     </div>
-    <button id="searchBtn" class="icon" type="button" aria-label="Caută o serie">⌕</button>
+    <button id="syncPill" class="pill" type="button" hidden>live</button>
+    <button id="dataBtn" class="icon" type="button" aria-label="Tabel cu date" title="Tabel cu date">▦</button>
+    <button id="searchBtn" class="icon" type="button" aria-label="Caută o serie" title="Caută">⌕</button>
   </header>
   <div class="progressbar"><i id="progressFill"></i></div>
 
@@ -80,6 +82,16 @@
       <span id="placingText">Atinge harta acolo unde se află echipamentul.</span>
       <button id="placeCancel" type="button">Renunță</button>
     </div>
+
+    <section id="dataView" hidden aria-label="Tabel cu date">
+      <div class="dvhead">
+        <div class="seg" id="dvTabs" role="group" aria-label="Ce se afișează"></div>
+        <button id="dvClose" class="icon" type="button" aria-label="Închide tabelul">×</button>
+      </div>
+      <div id="dvSummary"></div>
+      <div id="dvFilters"></div>
+      <div id="dvBody"></div>
+    </section>
 
     <aside id="sheet" hidden aria-label="Detalii">
       <div class="sheethead">

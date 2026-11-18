@@ -23,7 +23,7 @@ const stamp = (t) => { if (!t) return ''; const d = new Date(t); return `${d.get
 export const fileStamp = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`; };
 
 export function workbook() {
-  const panouri = [['Etichetă', 'Rând', 'Masă', 'Nivel', 'Poziție', 'Serie panou', 'Invertor', 'String', 'Scanat la', 'Sursă']];
+  const panouri = [['Etichetă', 'Rând', 'Masă', 'Nivel', 'Poziție', 'Serie panou', 'Invertor', 'String', 'Scanat la', 'Sursă', 'Scanat de']];
   const stringuri = [['Masă', 'Rând', 'Invertor', 'String', 'Panouri scanate', 'Total panouri']];
   for (const base of PARC.tables) {
     const t = store.getTable(base.id);
@@ -31,7 +31,7 @@ export function workbook() {
     for (let tier = 0; tier < PARC.tiers; tier++) {
       for (let col = 0; col < PARC.cols; col++) {
         const pid = store.panelId(t.id, tier, col), p = store.panels.get(pid) || {};
-        panouri.push([pid, t.row, t.idx, tier === 0 ? 'Sus' : 'Jos', col + 1, p.sn || '', inv, t.str, p.sn ? stamp(p.t) : '', p.sn ? (p.src || '') : '']);
+        panouri.push([pid, t.row, t.idx, tier === 0 ? 'Sus' : 'Jos', col + 1, p.sn || '', inv, t.str, p.sn ? stamp(p.t) : '', p.sn ? (p.src || '') : '', p.sn ? (p.by || '') : '']);
       }
     }
     stringuri.push([t.id, t.row, inv, t.str, store.tableProgress(t.id), PARC.cols * PARC.tiers]);
@@ -39,6 +39,7 @@ export function workbook() {
   const echip = [['Nume', 'Tip', 'Câmp', 'Valoare']];
   for (const e of store.listEquip()) {
     const rows = [];
+    for (const [k, v] of e.plan || []) rows.push([k + ' (din plan)', v]);
     for (const [key, label] of fieldsOf(e.type)) if (e[key]) rows.push([label, e[key]]);
     for (const x of e.extra || []) if (x.k || x.v) rows.push([x.k || '', x.v || '']);
     if (e.note) rows.push(['Note', e.note]);
@@ -80,6 +81,8 @@ export async function exportJson(withFiles) {
 export const folderSupported = 'showDirectoryPicker' in window;
 const JSON_NAME = 'inventar-parc.json', XLSX_NAME = 'Inventar parc.xlsx', FILES_DIR = 'Echipamente';
 let dir = null;
+let blobFetcher = null;             // aduce un fișier atașat pe alt dispozitiv (prin sincronizare)
+export function setBlobFetcher(fn) { blobFetcher = fn; }
 const written = new Map();          // fid -> cale scrisă în folder
 const removed = new Set();
 export const folder = { name: '', savedAt: 0, error: '', needsPermission: false };
@@ -142,7 +145,8 @@ export async function syncFolder() {
         continue;
       }
       if (written.get(meta.id) === sub + '/' + name) continue;
-      const blob = await store.getBlob(meta.id);
+      let blob = await store.getBlob(meta.id);
+      if (!blob && blobFetcher) blob = await blobFetcher(meta);
       if (!blob) continue;
       await writeFile(await root.getDirectoryHandle(sub, { create: true }), name, blob);
       written.set(meta.id, sub + '/' + name);

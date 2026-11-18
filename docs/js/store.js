@@ -19,7 +19,7 @@ export const baseEquip = new Map(PARC.equip.map((e) => [e.id, e]));
 
 const listeners = new Set();
 export function onChange(fn) { listeners.add(fn); }
-function emit(what) { for (const fn of listeners) fn(what); }
+function emit(what, key) { for (const fn of listeners) fn(what, key); }
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -59,6 +59,10 @@ function readAll(store) {
 function put(store, key, value) {
   return tx(store, 'readwrite', (s) => s.put(value, key)).catch(() => { persistent = false; });
 }
+function putMany(store, entries) {                 // o singură tranzacție pentru multe înregistrări
+  if (!entries.length) return Promise.resolve();
+  return tx(store, 'readwrite', (s) => { for (const [key, value] of entries) s.put(value, key); }).catch(() => { persistent = false; });
+}
 
 export async function init() {
   try { db = await openDb(); } catch (e) { db = null; persistent = false; }
@@ -74,9 +78,24 @@ function rebuildIndex() {
   snIndex.clear();
   for (const [pid, p] of panels) if (p.sn) snIndex.set(p.sn, pid);
 }
+function reindexSn(sn) {                           // seria a plecat de pe un panou: mai e pe altul?
+  snIndex.delete(sn);
+  for (const [pid, p] of panels) if (p.sn === sn) { snIndex.set(sn, pid); break; }
+}
+
+// Serii care apar pe mai multe panouri (se poate întâmpla când scanează două dispozitive în paralel).
+export function findDuplicates() {
+  const seen = new Map();
+  for (const [pid, p] of panels) if (p.sn) { if (!seen.has(p.sn)) seen.set(p.sn, []); seen.get(p.sn).push(pid); }
+  return [...seen].filter(([, list]) => list.length > 1).map(([sn, list]) => ({ sn, pids: list.sort() }));
+}
 
 export const kvGet = (key) => tx('kv', 'readonly', (s) => s.get(key)).catch(() => undefined);
 export const kvSet = (key, value) => put('kv', key, value);
+
+// Numele dispozitivului se notează la fiecare scanare, ca să se vadă cine a scanat ce.
+export let deviceName = '';
+export function setDeviceName(name) { deviceName = String(name || '').trim(); }
 
 // ---- Panouri ---------------------------------------------------------------
 export function panelId(tableId, tier, col) {
@@ -90,12 +109,13 @@ export const getSn = (pid) => (panels.get(pid) || {}).sn || '';
 export function setPanel(pid, sn, src) {
   sn = String(sn || '').trim();
   const old = panels.get(pid);
-  if (old && old.sn) snIndex.delete(old.sn);
   const rec = { sn, t: Date.now(), src: src || '' };
+  if (deviceName) rec.by = deviceName;
   panels.set(pid, rec);
+  if (old && old.sn && old.sn !== sn) reindexSn(old.sn);
   if (sn) snIndex.set(sn, pid);
   put('panels', pid, rec);
-  emit('panels');
+  emit('panels', pid);
 }
 
 export function scannedCount() {
@@ -121,7 +141,7 @@ export function setTable(tid, patch) {
   const rec = { ...(tables.get(tid) || {}), ...patch, t: Date.now() };
   tables.set(tid, rec);
   put('tables', tid, rec);
-  emit('tables');
+  emit('tables', tid);
 }
 export function tablesOfInverter(n) {
   return PARC.tables.map((t) => getTable(t.id)).filter((t) => t.inv === n)
@@ -143,7 +163,7 @@ export function setEquip(eid, patch) {
   const rec = { ...(equip.get(eid) || {}), ...patch, t: Date.now() };
   equip.set(eid, rec);
   put('equip', eid, rec);
-  emit('equip');
+  emit('equip', eid);
 }
 export function addEquip(type, name, x, y) {
   const eid = 'X' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
@@ -167,7 +187,7 @@ export async function addFile(equipId, file) {
   if (!db) memBlobs.set(id, file);
   await put('blobs', id, file);
   await put('files', id, meta);
-  emit('files');
+  emit('files', id);
   return meta;
 }
 export function filesOf(equipId) {
@@ -186,11 +206,77 @@ export async function deleteFile(fid) {
   memBlobs.delete(fid);
   await put('files', fid, rec);
   await tx('blobs', 'readwrite', (s) => s.delete(fid)).catch(() => {});
-  emit('files');
+  emit('files', fid);
+}
+
+export async function putBlob(fid, blob) {          // conținut adus de pe alt dispozitiv
+  if (!db) memBlobs.set(fid, blob);
+  await put('blobs', fid, blob);
+}
+export function markUploaded(fid, path) {           // fișierul a ajuns în depozitul de date
+  const meta = files.get(fid);
+  if (!meta || meta.deleted) return;
+  const rec = { ...meta, up: true, path, t: Date.now() };
+  files.set(fid, rec);
+  put('files', fid, rec);
+  emit('files', fid);
+}
+
+// ---- Bucăți pentru sincronizare ------------------------------------------------
+// Datele se împart în fișiere mici: câte unul pe rând de mese (R01 … R21) și unul pentru echipamente,
+// ca la fiecare scanare să se trimită doar rândul la care se lucrează.
+export const CHUNKS = [...new Set(PARC.tables.map((t) => 'R' + String(t.row).padStart(2, '0')))].concat('echipamente');
+export const chunkOfPanel = (pid) => pid.slice(0, 3);
+const sorted = (map, keep) => Object.fromEntries([...map].filter(([k]) => !keep || keep(k)).sort((a, b) => (a[0] < b[0] ? -1 : 1)));
+
+export function serializeChunk(name) {
+  if (name === 'echipamente') return { v: 1, tables: sorted(tables), equip: sorted(equip), files: sorted(files) };
+  return { v: 1, panels: sorted(panels, (pid) => chunkOfPanel(pid) === name) };
+}
+export function chunkMaxT(name) {                   // momentul celei mai noi modificări locale din bucată
+  let max = 0;
+  if (name === 'echipamente') { for (const map of [tables, equip, files]) for (const rec of map.values()) if ((rec.t || 0) > max) max = rec.t; }
+  else for (const [pid, rec] of panels) if (chunkOfPanel(pid) === name && (rec.t || 0) > max) max = rec.t;
+  return max;
+}
+export function chunkHasData(name) {
+  if (name === 'echipamente') return tables.size + equip.size + files.size > 0;
+  for (const pid of panels.keys()) if (chunkOfPanel(pid) === name) return true;
+  return false;
+}
+
+// Unește o bucată venită din depozit cu datele locale: pentru fiecare înregistrare rămâne cea mai nouă.
+// Întoarce și dacă local există ceva mai nou decât în depozit (deci bucata trebuie trimisă).
+export async function mergeChunk(name, data) {
+  const newer = (mine, theirs) => !mine || (theirs.t || 0) > (mine.t || 0);
+  let changed = false, localNewer = false;
+  const groups = name === 'echipamente'
+    ? [['tables', tables, (id) => baseTables.has(id)], ['equip', equip, () => true], ['files', files, () => true]]
+    : [['panels', panels, (pid) => chunkOfPanel(pid) === name && baseTables.has(pid.slice(0, 7))]];
+  for (const [kind, map, valid] of groups) {
+    const remote = (data && data[kind]) || {};
+    const take = [];
+    for (const [id, rec] of Object.entries(remote)) {
+      if (rec && typeof rec === 'object' && valid(id) && newer(map.get(id), rec)) take.push([id, rec]);
+    }
+    for (const [id, rec] of take) map.set(id, rec);                 // întâi memoria, fără pauze: o scriere locală nu poate fi călcată
+    await putMany(kind, take);
+    if (kind === 'files') {
+      for (const [id, rec] of take) if (rec.deleted) { memBlobs.delete(id); await tx('blobs', 'readwrite', (s) => s.delete(id)).catch(() => {}); }
+    }
+    if (take.length) changed = true;
+    for (const [id, rec] of map) {
+      if (!valid(id)) continue;
+      const theirs = remote[id];
+      if (!theirs || (rec.t || 0) > (theirs.t || 0)) { localNewer = true; break; }
+    }
+  }
+  if (changed) { rebuildIndex(); emit('sync', name); }
+  return { changed, localNewer };
 }
 
 // ---- Export / import (transfer telefon <-> calculator) ------------------------
-function blobToBase64(blob) {
+export function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onload = () => resolve(String(r.result).split(',')[1] || '');

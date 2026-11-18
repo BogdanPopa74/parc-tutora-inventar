@@ -255,8 +255,8 @@ export function createMap(canvas, onTap) {
     if (label && (s >= 1.3 || e.type === 'ptab' || e.custom)) {
       ctx.font = '600 11px system-ui, sans-serif';
       ctx.textAlign = 'left';
-      const lx = b.x + b.w + 4, ly = b.y + b.h / 2;
       const w = ctx.measureText(label).width;
+      const lx = e.type === 'ptab' ? b.x - w - 6 : b.x + b.w + 4, ly = b.y + b.h / 2;
       ctx.fillStyle = css.surface; ctx.globalAlpha = 0.85;
       ctx.fillRect(lx - 2, ly - 8, w + 4, 16);
       ctx.globalAlpha = 1;

@@ -21,6 +21,14 @@ PANEL_BLUE = (0.0, 0.431, 0.867)
 BROWN = (0.722, 0.361, 0.0)
 CABLE = {(1.0, 0.0, 0.0): 'R', (1.0, 0.498, 0.0): 'O', (0.0, 0.0, 1.0): 'B'}
 COLS, TIERS = 14, 2                          # o masă = 2 rânduri x 14 panouri (2P)
+
+# Jurnalele de cablu de pe planșa „Cablu DC & AC” (pag. 10). Textul e desenat ca linii, deci nu se
+# poate extrage automat; valorile sunt citite de pe planșă: invertor -> (cablu AC 0,8 kV până la PTAB,
+# cablu DC 10 mm² roșu = negru), în metri. Totalurile de control sunt cele de pe planșă.
+CABLURI = {1: (93, 1137), 2: (47, 1514), 3: (73, 1100), 4: (111, 1726), 5: (134, 1794),
+           6: (161, 1826), 7: (194, 1925), 8: (208, 1800), 9: (261, 1703)}
+assert sum(v[0] for v in CABLURI.values()) == 1282 and sum(v[1] for v in CABLURI.values()) == 14525
+CABLU_20KV = 155                             # PTAB -> pilon de racord
 MAP_BOTTOM = 700                             # sub această cotă (pt) sunt legenda și cartușul
 
 
@@ -97,31 +105,20 @@ def main(src, dst):
     inv_words = sorted((w for w in w8 if w[0].startswith('INV.0')), key=lambda w: w[0])
     assert len(comps) == len(inv_words), (len(comps), len(inv_words))
 
-    touch = collections.defaultdict(dict)            # masă -> {invertor: calitatea atingerii}
+    # Coborârea de cablu a fiecărei mese e desenată la marginea ei din stânga, deci tronsonul vertical
+    # aflat la x-ul marginii stângi spune fără echivoc din ce invertor vine stringul mesei.
+    for t in tables:
+        t['_inv'] = set()
     for ci, comp in enumerate(comps):
         for _, x0, y0, x1, y1 in comp:
-            if x1 - x0 < 1.0 and y1 - y0 > 0.8:      # tronson vertical = coborâre la masă
+            if x1 - x0 < 1.0 and y1 - y0 > 0.8:
                 xm = (x0 + x1) / 2
-                for ti, t in enumerate(tables):
-                    if not (t['x0'] - 0.3 <= xm <= t['x1'] + 0.3):
-                        continue
-                    exact = abs(y1 - t['y0']) < 0.6 or abs(y0 - t['y1']) < 0.6
-                    over = y0 < t['y1'] and y1 > t['y0']
-                    if exact or over:
-                        touch[ti][ci] = max(touch[ti].get(ci, 0), 2 if exact else 1)
-    counts = collections.Counter()
-    for ti, t in enumerate(tables):
-        assert touch[ti], 'masă fără cablu: R%d M%d' % (t['row'], t['idx'])
-        best = max(touch[ti].values())
-        cands = [c for c, q in touch[ti].items() if q == best]
-        t['_cands'] = cands
-        if len(cands) == 1:
-            t['inv'] = cands[0] + 1
-            counts[t['inv']] += 1
-    for t in tables:                                 # mesele atinse de două cabluri merg la invertorul mai liber
-        if 'inv' not in t:
-            t['inv'] = min(t['_cands'], key=lambda c: counts[c + 1]) + 1
-            counts[t['inv']] += 1
+                for t in tables:
+                    if abs(xm - t['x0']) < 0.4 and y0 < t['y1'] + 0.6 and y1 > t['y0'] - 0.6:
+                        t['_inv'].add(ci + 1)
+    for t in tables:
+        assert len(t['_inv']) == 1, 'masă cu legătură neclară: R%d M%d %s' % (t['row'], t['idx'], sorted(t['_inv']))
+        t['inv'] = next(iter(t['_inv']))
     per_inv = collections.defaultdict(int)
     for t in sorted(tables, key=lambda t: (t['inv'], t['row'], t['idx'])):
         per_inv[t['inv']] += 1
@@ -157,10 +154,20 @@ def main(src, dst):
     equip = []
     ptab = next(r for r in r8 if r[4] == (0.0, 0.0, 0.0) and r[1] < MAP_BOTTOM and 4 < r[2] - r[0] < 8 and 9 < r[3] - r[1] < 15)
     equip.append(dict(id='PTAB', type='ptab', name='PTAB / STS', x=mx(ptab[0]), y=my(ptab[1]),
-                      w=round((ptab[2] - ptab[0]) * M_PER_PT, 2), h=round((ptab[3] - ptab[1]) * M_PER_PT, 2)))
+                      w=round((ptab[2] - ptab[0]) * M_PER_PT, 2), h=round((ptab[3] - ptab[1]) * M_PER_PT, 2),
+                      plan=[['Tip', 'PTAB MVA / 0,8 kV'], ['Invertoare racordate', str(len(inv_words))],
+                            ['Cablu 20 kV până la pilonul de racord', '%d m' % CABLU_20KV],
+                            ['Cablu 0,8 kV către invertoare (total)', '%d m' % sum(v[0] for v in CABLURI.values())]]))
     for i, w in enumerate(inv_words):               # simbolul invertorului e în stânga etichetei
-        equip.append(dict(id='INV%02d' % (i + 1), type='inv', name='Invertor %02d' % (i + 1), n=i + 1,
-                          x=mx(w[1] - 10.8), y=my(w[2]), w=round(10.8 * M_PER_PT, 2), h=round(5.64 * M_PER_PT, 2)))
+        n = i + 1
+        mine = [t for t in tables if t['inv'] == n]
+        plan = [['Stringuri', '%d (câte %d panouri)' % (len(mine), COLS * TIERS)],
+                ['Mese', 'rândurile %d–%d' % (min(t['row'] for t in mine), max(t['row'] for t in mine))]]
+        if n in CABLURI:
+            plan += [['Cablu AC 0,8 kV până la PTAB', '%d m' % CABLURI[n][0]],
+                     ['Cablu DC 10 mm² până la stringuri', '%d m roșu + %d m negru' % (CABLURI[n][1], CABLURI[n][1])]]
+        equip.append(dict(id='INV%02d' % n, type='inv', name='Invertor %02d' % n, n=n,
+                          x=mx(w[1] - 10.8), y=my(w[2]), w=round(10.8 * M_PER_PT, 2), h=round(5.64 * M_PER_PT, 2), plan=plan))
     rac = next((w for w in w8 if w[0] == 'RACORD' and w[2] < MAP_BOTTOM), None)
     if rac:
         equip.append(dict(id='RACORD', type='racord', name='Stâlpi racord 20 kV', x=mx(rac[1]), y=my(rac[4] + 2)))
