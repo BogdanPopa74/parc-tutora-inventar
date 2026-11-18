@@ -116,8 +116,10 @@ export function createScanner(els, onCode) {
     else setTimeout(tick, 60);
   }
 
+  let gen = 0;                                      // o pornire depășită de o oprire se anulează
   async function start(deviceId) {
     stop();
+    const my = gen;
     if (!(await ready)) return { ok: false, error: 'Browserul nu are cititor de coduri de bare. Folosește Chrome pe Android sau introdu codul manual.' };
     if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       return { ok: false, error: 'Camera merge doar pe o adresă HTTPS.' };
@@ -132,6 +134,7 @@ export function createScanner(els, onCode) {
         ? 'Camera e blocată. Apasă pe lacătul din bara de adrese → Permisiuni → Cameră → Permite.'
         : 'Camera nu a pornit: ' + (e && e.message || e) };
     }
+    if (my !== gen) { for (const t of stream.getTracks()) t.stop(); stream = null; return { ok: false, cancelled: true }; }
     video.srcObject = stream;
     try { await video.play(); } catch (e) { /* pornește la următorul gest */ }
     track = stream.getVideoTracks()[0];
@@ -147,6 +150,7 @@ export function createScanner(els, onCode) {
   }
 
   function stop() {
+    gen++;
     running = false;
     if (stream) for (const t of stream.getTracks()) t.stop();
     stream = null; track = null; caps = {};

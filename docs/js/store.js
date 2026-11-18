@@ -18,6 +18,8 @@ export const baseTables = new Map(PARC.tables.map((t) => [t.id, t]));
 export const baseEquip = new Map(PARC.equip.map((e) => [e.id, e]));
 
 const listeners = new Set();
+// Momentul unei modificări: niciodată mai mic decât al versiunii anterioare, chiar dacă ceasul telefonului e în urmă.
+const stamp = (old) => Math.max(Date.now(), ((old && old.t) || 0) + 1);
 export function onChange(fn) { listeners.add(fn); }
 function emit(what, key) { for (const fn of listeners) fn(what, key); }
 
@@ -57,7 +59,7 @@ function readAll(store) {
 }
 
 function put(store, key, value) {
-  return tx(store, 'readwrite', (s) => s.put(value, key)).catch(() => { persistent = false; });
+  return tx(store, 'readwrite', (s) => s.put(value, key)).catch(() => { if (persistent) { persistent = false; emit('storage'); } });
 }
 function putMany(store, entries) {                 // o singură tranzacție pentru multe înregistrări
   if (!entries.length) return Promise.resolve();
@@ -66,7 +68,7 @@ function putMany(store, entries) {                 // o singură tranzacție pen
 
 export async function init() {
   try { db = await openDb(); } catch (e) { db = null; persistent = false; }
-  for (const [k, v] of await readAll('panels')) panels.set(k, v);
+  for (const [k, v] of await readAll('panels')) if (v && typeof v === 'object') panels.set(k, v);
   for (const [k, v] of await readAll('tables')) tables.set(k, v);
   for (const [k, v] of await readAll('equip')) equip.set(k, v);
   for (const [k, v] of await readAll('files')) files.set(k, v);
@@ -74,9 +76,10 @@ export async function init() {
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* opțional */ }
 }
 
+const validRec = (r) => r && typeof r === 'object' && !Array.isArray(r) && Number.isFinite(r.t || 0) && (r.t || 0) < Date.now() + 864e5 * 365;
 function rebuildIndex() {
   snIndex.clear();
-  for (const [pid, p] of panels) if (p.sn) snIndex.set(p.sn, pid);
+  for (const [pid, p] of panels) if (p && p.sn) snIndex.set(p.sn, pid);
 }
 function reindexSn(sn) {                           // seria a plecat de pe un panou: mai e pe altul?
   snIndex.delete(sn);
@@ -109,7 +112,7 @@ export const getSn = (pid) => (panels.get(pid) || {}).sn || '';
 export function setPanel(pid, sn, src) {
   sn = String(sn || '').trim();
   const old = panels.get(pid);
-  const rec = { sn, t: Date.now(), src: src || '' };
+  const rec = { sn, t: stamp(old), src: src || '' };
   if (deviceName) rec.by = deviceName;
   panels.set(pid, rec);
   if (old && old.sn && old.sn !== sn) reindexSn(old.sn);
@@ -138,7 +141,7 @@ export function getTable(tid) {
   return base ? { ...base, ...(tables.get(tid) || {}) } : null;
 }
 export function setTable(tid, patch) {
-  const rec = { ...(tables.get(tid) || {}), ...patch, t: Date.now() };
+  const rec = { ...(tables.get(tid) || {}), ...patch, t: stamp(tables.get(tid)) };
   tables.set(tid, rec);
   put('tables', tid, rec);
   emit('tables', tid);
@@ -160,7 +163,7 @@ export function listEquip() {
   return [...ids].map(getEquip).filter((e) => e && !e.deleted);
 }
 export function setEquip(eid, patch) {
-  const rec = { ...(equip.get(eid) || {}), ...patch, t: Date.now() };
+  const rec = { ...(equip.get(eid) || {}), ...patch, t: stamp(equip.get(eid)) };
   equip.set(eid, rec);
   put('equip', eid, rec);
   emit('equip', eid);
@@ -201,7 +204,7 @@ export async function getBlob(fid) {
 export async function deleteFile(fid) {
   const meta = files.get(fid);
   if (!meta) return;
-  const rec = { ...meta, deleted: true, t: Date.now() };
+  const rec = { ...meta, deleted: true, t: stamp(meta) };
   files.set(fid, rec);
   memBlobs.delete(fid);
   await put('files', fid, rec);
@@ -216,7 +219,7 @@ export async function putBlob(fid, blob) {          // conținut adus de pe alt 
 export function markUploaded(fid, path) {           // fișierul a ajuns în depozitul de date
   const meta = files.get(fid);
   if (!meta || meta.deleted) return;
-  const rec = { ...meta, up: true, path, t: Date.now() };
+  const rec = { ...meta, up: true, path, t: stamp(meta) };
   files.set(fid, rec);
   put('files', fid, rec);
   emit('files', fid);
@@ -257,7 +260,7 @@ export async function mergeChunk(name, data) {
     const remote = (data && data[kind]) || {};
     const take = [];
     for (const [id, rec] of Object.entries(remote)) {
-      if (rec && typeof rec === 'object' && valid(id) && newer(map.get(id), rec)) take.push([id, rec]);
+      if (validRec(rec) && (kind !== 'panels' || typeof rec.sn === 'string') && valid(id) && newer(map.get(id), rec)) take.push([id, rec]);
     }
     for (const [id, rec] of take) map.set(id, rec);                 // întâi memoria, fără pauze: o scriere locală nu poate fi călcată
     await putMany(kind, take);
@@ -314,15 +317,15 @@ export async function importData(data) {
   const stats = { panouri: 0, mese: 0, echipamente: 0, fisiere: 0 };
   const newer = (mine, theirs) => !mine || (theirs.t || 0) > (mine.t || 0);
   for (const [pid, rec] of Object.entries(data.panels || {})) {
-    if (baseTables.has(pid.slice(0, 7)) && newer(panels.get(pid), rec)) {
+    if (validRec(rec) && typeof rec.sn === 'string' && baseTables.has(pid.slice(0, 7)) && newer(panels.get(pid), rec)) {
       panels.set(pid, rec); await put('panels', pid, rec); stats.panouri++;
     }
   }
   for (const [tid, rec] of Object.entries(data.tables || {})) {
-    if (baseTables.has(tid) && newer(tables.get(tid), rec)) { tables.set(tid, rec); await put('tables', tid, rec); stats.mese++; }
+    if (validRec(rec) && baseTables.has(tid) && newer(tables.get(tid), rec)) { tables.set(tid, rec); await put('tables', tid, rec); stats.mese++; }
   }
   for (const [eid, rec] of Object.entries(data.equip || {})) {
-    if (newer(equip.get(eid), rec)) { equip.set(eid, rec); await put('equip', eid, rec); stats.echipamente++; }
+    if (validRec(rec) && newer(equip.get(eid), rec)) { equip.set(eid, rec); await put('equip', eid, rec); stats.echipamente++; }
   }
   for (const item of data.files || []) {
     const { data: b64, ...meta } = item;

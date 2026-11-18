@@ -615,7 +615,11 @@ function updateScanUi() {
 }
 
 async function startCamera() {
+  if ($('camStart').disabled) return;
+  $('camStart').disabled = true;
   const res = await scanner.start();
+  $('camStart').disabled = false;
+  if (res.cancelled || !scan.active) return;
   if (!res.ok) { $('camMsg').textContent = res.error; $('idle').hidden = false; $('reticle').hidden = true; return; }
   $('idle').hidden = true; $('reticle').hidden = false;
   $('torchBtn').hidden = !res.torch; $('torchBtn').setAttribute('aria-pressed', 'false');
@@ -674,6 +678,7 @@ function advance() {
   const n = nextPos(scan.cursor);
   if (n) { setCursor(n); return; }
   setCursor(null);
+  store.kvSet('lastCursor', null);
   beep('end');
   scanMsg('', 'Capăt de rând. Atinge pe hartă primul panou al rândului următor.');
 }
@@ -693,7 +698,7 @@ function handleCode(raw, src) {
   if (at === scan.cursor) { flash('ok'); scanMsg('ok', 'Confirmat: ' + code); scan.history.push({ pid: scan.cursor, prev: cur }); advance(); return; }
   if (at) {
     flash('dup'); scanMsg('dup', 'Dublură');
-    notice('Codul ' + code + ' este deja la ' + at + '.', 'Mută aici', () => { store.setPanel(at, '', ''); place(code, src, { pid: at, sn: code }); });
+    notice('Codul ' + code + ' este deja la ' + at + '.' + (cur ? ' Seria ' + cur + ' de aici va fi înlocuită.' : ''), 'Mută aici', () => { store.setPanel(at, '', ''); place(code, src, { pid: at, sn: code }); });
     return;
   }
   if (cur) {
@@ -762,6 +767,7 @@ window.addEventListener('resize', updateInsets);
 // ---- Pornire -----------------------------------------------------------------
 let saveTimer = 0;
 store.onChange((what) => {
+  if (what === 'storage') toast('Atenție: telefonul nu mai poate salva date (memorie plină?). Nu închide aplicația până nu se sincronizează.');
   updateProgress(); map.invalidate();
   const typing = document.activeElement && $('sheet').contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
   const viewing = current && ['panel', 'table', 'equip', 'equipList', 'menu'].includes(current.kind);

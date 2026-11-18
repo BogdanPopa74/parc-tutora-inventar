@@ -21,6 +21,7 @@ let meta = { shas: {}, dirty: [], etag: '', clean: {} };
 let noEtag = false;             // devine true dacă cererile condiționate nu merg în acest browser
 const dirty = new Set();
 const version = new Map();      // de câte ori s-a modificat o bucată; ca să nu pierdem schimbări făcute în timpul trimiterii
+let filesFail = 0, filesRetryAt = 0;
 let busy = false, again = false, pushTimer = 0, pollTimer = 0, pausedUntil = 0, lastPush = 0;
 const listeners = new Set();
 export function onStatus(fn) { listeners.add(fn); }
@@ -118,15 +119,15 @@ async function pull() {
   catch (e) {                                       // unele combinații de browser/proxy resping răspunsul „nemodificat”
     if (noEtag || !meta.etag) throw e;
     res = await gh('GET', '/contents/date');
-    noEtag = true;
+    noEtag = true; setTimeout(() => { noEtag = false; }, 10 * 60 * 1000);
   }
   if (res.status === 304) return;
   let listing = [];
   if (res.status !== 404) {                         // 404 = încă nu există nimic în depozit
     if (!res.ok) throw await fail(res);
     listing = await res.json();
-    meta.etag = res.headers.get('ETag') || '';
   }
+  const newEtag = res.headers.get('ETag') || '';
   if (!Array.isArray(listing)) listing = [];
   const present = new Set();
   for (const f of listing) {
@@ -139,6 +140,7 @@ async function pull() {
   for (const name of store.CHUNKS) {
     if (!present.has(name)) { delete meta.shas[name]; if (store.chunkHasData(name)) markDirty(name); }
   }
+  meta.etag = newEtag;                              // abia acum: dacă o bucată nu s-a putut citi, lista se cere din nou
 }
 
 // ---- Scriere -----------------------------------------------------------------------
@@ -177,8 +179,11 @@ async function uploadFiles() {
     if (blob.size > MAX_FILE) { state.skipped.push(f.name); continue; }
     const path = 'fisiere/' + f.id + '/' + String(f.name).replace(/[\\/:*?"<>|#%]/g, '_');
     const res = await gh('PUT', '/contents/' + encPath(path), { body: { message: (store.deviceName || 'dispozitiv') + ': fișier ' + f.name, content: await store.blobToBase64(blob) } });
-    if (!res.ok && res.status !== 422 && res.status !== 409) throw await fail(res);     // 422 = fișierul există deja
     if (res.status === 409) continue;                                                    // ramura s-a mișcat: îl luăm tura viitoare
+    if (res.status === 422) {                                                            // există deja? verificăm
+      const chk = await gh('GET', '/contents/' + encPath(path));
+      if (!chk.ok) throw await fail(res);
+    } else if (!res.ok) throw await fail(res);
     store.markUploaded(f.id, path);
   }
 }
@@ -207,9 +212,14 @@ export async function syncNow(full) {
   setStatus('syncing');
   try {
     await pull();
-    await uploadFiles();
-    if (dirty.size) lastPush = Date.now();
-    for (const name of [...dirty]) await pushChunk(name);
+    if (dirty.size && (full || Date.now() - lastPush >= PUSH_MS - 500)) {   // cel mult o trimitere la PUSH_MS
+      lastPush = Date.now();
+      for (const name of [...dirty]) await pushChunk(name);
+    }
+    if (Date.now() >= filesRetryAt) {
+      try { await uploadFiles(); filesFail = 0; }
+      catch (e) { filesFail++; filesRetryAt = Date.now() + Math.min(30 * 60e3, 30e3 * 2 ** filesFail); state.fileError = explain(e); }
+    }
     state.lastSync = Date.now();
     setStatus('ok');
   } catch (e) {

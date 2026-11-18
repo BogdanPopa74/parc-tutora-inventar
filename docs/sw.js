@@ -1,7 +1,7 @@
 // Service worker: ține aplicația în cache ca să pornească și fără semnal în parc.
 // La fiecare modificare a aplicației se schimbă VERSION: browserul vede fișierul diferit, descarcă
 // toate fișierele noi într-un cache separat și abia apoi le folosește, deci nu amestecă versiuni.
-const VERSION = '2026-11-18.2';
+const VERSION = '2026-11-18.3';
 const CACHE = 'parc-inventar-' + VERSION;
 const FILES = ['./', 'index.html', 'app.css', 'parc-data.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
   'js/main.js', 'js/store.js', 'js/map.js', 'js/scanner.js', 'js/io.js', 'js/xlsx.js', 'js/sync.js', 'js/dataview.js', 'test-scanner.html'];
