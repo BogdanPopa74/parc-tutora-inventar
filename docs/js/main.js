@@ -413,10 +413,27 @@ function openMenu() {
         h('button', { type: 'button', class: io.folder.needsPermission ? '' : 'primary', onclick: () => connect(false) }, 'Alege folderul')));
   }
   nodes.push(h('h3', {}, 'Altele'), h('div', { class: 'btns' },
+    h('button', { type: 'button', onclick: openHelp }, 'Cum scanez'),
     h('a', { class: 'btn', href: 'test-scanner.html' }, 'Test scanner'),
     h('button', { type: 'button', onclick: () => { map.fit(); closeSheet(); } }, 'Arată tot parcul')),
   h('p', { class: 'muted' }, 'Harta: ' + PARC.source + '.' + (VERSION ? ' Versiunea aplicației: ' + VERSION + '.' : '')));
   openSheet('Meniu', nodes, { kind: 'menu' });
+}
+
+function openHelp() {
+  const steps = [
+    'Apasă „Scanează”. Prima dată, permite accesul la cameră.',
+    'Atinge pe hartă panoul de la care începi (primul din rând). Chenarul portocaliu arată poziția curentă.',
+    'Ține eticheta panoului în chenarul galben. La bip, seria e salvată și poziția trece singură la panoul următor.',
+    '„Sus-jos” înseamnă: panoul de sus, apoi cel de jos din aceeași coloană, apoi coloana următoare. „Pe rând” parcurge toate panourile de pe același nivel. „Spre est / vest” schimbă direcția.',
+    '„Sari” lasă poziția goală (etichetă lipsă sau ilizibilă). „Anulează” șterge ultima scanare și te întoarce la ea.',
+    'La capăt de rând auzi două sunete. Atinge primul panou al rândului următor și continuă.',
+    'Semnal roșu: seria e deja scanată în alt loc sau poziția e ocupată. Alege „Mută aici” / „Înlocuiește” ori scanează alt panou.',
+    'Fără semnal poți scana mai departe. Sus scrie „offline”, iar datele pleacă singure când revine internetul.',
+    'Dacă închizi aplicația, „Scanează” te duce înapoi la poziția la care ai rămas.',
+  ];
+  openSheet('Cum scanez', [h('ol', { class: 'steps' }, steps.map((t) => h('li', {}, t))),
+    h('p', { class: 'muted' }, 'Eticheta nu se citește? Încearcă lanterna și zoomul din ecranul de scanare, apropie telefonul la 10–20 cm sau scrie seria de mână.')], { kind: 'help' });
 }
 
 // ---- Sincronizare live -------------------------------------------------------
