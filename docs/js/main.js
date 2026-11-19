@@ -672,7 +672,7 @@ async function startCamera() {
   $('torchBtn').hidden = !res.torch; $('torchBtn').setAttribute('aria-pressed', 'false');
   if (res.zoom) {
     const z = $('camZoom');
-    z.min = res.zoom.min; z.max = res.zoom.max; z.step = res.zoom.step || 0.1; z.value = res.zoom.min;
+    z.min = res.zoom.min; z.max = res.zoom.max; z.step = res.zoom.step || 0.1; z.value = res.zoom.value;
     $('zoomLabel').textContent = 'Zoom ' + Number(z.value).toFixed(1) + '×';
     $('zoomRow').hidden = false;
   } else $('zoomRow').hidden = true;
@@ -866,6 +866,28 @@ $('scanFab').addEventListener('click', () => {
   startScan(pid);
 });
 $('scanDone').addEventListener('click', stopScan);
+$('viewer').addEventListener('click', (e) => {
+  if (!scanner.running) return;
+  const r = $('viewer').getBoundingClientRect();
+  scanner.focusAt((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+});
+
+// Scanner extern (Bluetooth / USB, „ca o tastatură”): tastează foarte repede și apasă Enter.
+// Codul se prinde oriunde în aplicație cât e deschisă scanarea, fără să atingi câmpul de text.
+let wedge = { buf: '', t: 0 };
+document.addEventListener('keydown', (e) => {
+  if (!scan.active || e.ctrlKey || e.altKey || e.metaKey) return;
+  const inField = e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName) && e.target.id !== 'scanInput';
+  if (inField) return;
+  const now = performance.now();
+  if (now - wedge.t > 80) wedge.buf = '';
+  wedge.t = now;
+  if (e.key === 'Enter') {
+    if (wedge.buf.length >= 6) { e.preventDefault(); const code = wedge.buf; wedge.buf = ''; if (e.target.id === 'scanInput') e.target.value = ''; handleCode(code, 'scanner'); }
+    return;
+  }
+  if (e.key.length === 1) wedge.buf += e.key;
+}, true);
 
 // Poză cu rezoluție completă: merge mai bine la etichete mici sau în soare puternic.
 $('photoInput').addEventListener('change', async () => {

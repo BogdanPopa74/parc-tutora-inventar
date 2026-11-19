@@ -5,6 +5,8 @@ const WANTED = ['code_128', 'code_39', 'code_93', 'codabar', 'itf', 'ean_13', 'e
   'upc_a', 'upc_e', 'qr_code', 'data_matrix', 'pdf417', 'aztec'];
 const RETICLE = { w: 0.86, h: 0.44 };   // la fel ca în CSS (.reticle)
 const CONFIRM_FRAMES = 2, CONFIRM_WINDOW = 700, HOLD_MS = 2500;
+// Seriile modulelor din parc: o singură citire e suficientă (Code 128 are sumă de control).
+const TRUSTED = /^A161098744B97\s*\d{6}(\s*-\s*[LH])?$/i;
 
 const ZX_FORMATS = ['code_128', 'code_39', 'code_93', 'itf', 'ean_13', 'qr_code', 'data_matrix'];
 let zxPromise = null;
@@ -26,6 +28,9 @@ export function loadZxing() {
   }).catch(() => null);
   return zxPromise;
 }
+
+const localStorageGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const localStorageSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* opțional */ } };
 
 let audio = null;
 export function beep(kind) {
@@ -125,8 +130,8 @@ export function createScanner(els, onCode) {
     for (const b of found) {
       if (!b.rawValue) continue;
       const c = centerOf(b);
-      if (c.x < g.rx0 || c.x > g.rx1 || c.y < g.ry0 || c.y > g.ry1) continue;
-      const d = (c.x - g.cx) ** 2 + (c.y - g.cy) ** 2;
+      const inside = c.x >= g.rx0 && c.x <= g.rx1 && c.y >= g.ry0 && c.y <= g.ry1;
+      const d = (c.x - g.cx) ** 2 + (c.y - g.cy) ** 2 + (inside ? 0 : 1e9);
       if (d < best) { best = d; chosen = b; }
     }
     draw(found, g, chosen);
@@ -136,7 +141,7 @@ export function createScanner(els, onCode) {
     if (code === pending.code && now - pending.t < CONFIRM_WINDOW) pending.n++;
     else pending = { code, n: 1, t: now };
     pending.t = now;
-    if (pending.n >= CONFIRM_FRAMES) {
+    if (pending.n >= (TRUSTED.test(code) ? 1 : CONFIRM_FRAMES)) {
       held = { code, seen: now };
       pending = { code: null, n: 0, t: 0 };
       onCode(code, chosen.format);
@@ -151,7 +156,7 @@ export function createScanner(els, onCode) {
       if (detector) { try { found = await detector.detect(video); if (found.length) info.lastEngine = 'nativ'; } catch (e) { /* cadru sărit */ } }
       // ZXing: când nu există cititor nativ, sau când nativul n-a găsit nimic de peste o secundă (din 2 în 2 cadre)
       const g = geometry();
-      if (!found.length && zx && g && (!detector || (performance.now() - lastHit > 1000 && frame % 2 === 0))) {
+      if (!found.length && zx && g && (!detector || performance.now() - lastHit > 400)) {
         const c = cropReticle(g);
         if (c) { try { found = (await zx.detect(c.canvas)).map((b) => shift(b, c.sx, c.sy)); if (found.length) info.lastEngine = 'ZXing'; } catch (e) { /* cadru sărit */ } }
       }
@@ -192,11 +197,17 @@ export function createScanner(els, onCode) {
     if (caps.focusMode && caps.focusMode.includes('continuous')) {
       track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
     }
+    let zoom = null;
+    if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+      const want = Math.min(caps.zoom.max, Math.max(caps.zoom.min, Number(localStorageGet('camZoom')) || 2));
+      await track.applyConstraints({ advanced: [{ zoom: want }] }).catch(() => {});
+      zoom = { ...caps.zoom, value: want };
+    }
     running = true;
     pending = { code: null, n: 0, t: 0 }; held = { code: null, seen: 0 };
     schedule();
     try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* opțional */ }
-    return { ok: true, torch: !!caps.torch, zoom: caps.zoom && caps.zoom.max > caps.zoom.min ? caps.zoom : null };
+    return { ok: true, torch: !!caps.torch, zoom };
   }
 
   function stop() {
@@ -235,6 +246,16 @@ export function createScanner(els, onCode) {
     get running() { return running; },
     release() { held = { code: null, seen: 0 }; },      // permite recitirea imediată a aceluiași cod
     async setTorch(on) { if (!track) return false; try { await track.applyConstraints({ advanced: [{ torch: on }] }); return true; } catch (e) { return false; } },
-    setZoom(z) { if (track) track.applyConstraints({ advanced: [{ zoom: Number(z) }] }).catch(() => {}); },
+    setZoom(z) { localStorageSet('camZoom', z); if (track) track.applyConstraints({ advanced: [{ zoom: Number(z) }] }).catch(() => {}); },
+    // Atingere pe imagine: refocalizare pe punctul atins (unde telefonul permite).
+    focusAt(fx, fy) {
+      if (!track) return;
+      const adv = {};
+      if (caps.focusMode && caps.focusMode.includes('single-shot')) adv.focusMode = 'single-shot';
+      if ('pointsOfInterest' in (track.getSettings ? track.getSettings() : {}) || caps.pointsOfInterest) adv.pointsOfInterest = [{ x: fx, y: fy }];
+      track.applyConstraints({ advanced: [adv] }).then(() => {
+        if (adv.focusMode) setTimeout(() => track && track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {}), 1500);
+      }).catch(() => {});
+    },
   };
 }

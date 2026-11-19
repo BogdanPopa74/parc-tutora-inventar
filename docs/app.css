@@ -202,3 +202,4 @@ textarea { min-height: 72px; resize: vertical; }
 #scanPanel.detect .scanpos strong { color: var(--ink); font-size: 26px; }
 @media (min-width: 900px) { #scanPanel.detect { bottom: auto; } }
 body.detecting .zoomctl, body.detecting .mapctl { display: none; }
+#scanPanel.detect .viewer { height: 42vh; }
