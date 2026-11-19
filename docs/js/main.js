@@ -410,6 +410,7 @@ function openMenu() {
     !store.persistent ? h('div', { class: 'banner' }, 'Browserul nu permite salvarea pe dispozitiv (fereastră privată?). Datele se pierd la închidere.') : null,
     h('div', { class: 'btns' },
       h('button', { type: 'button', onclick: () => { closeSheet(); dataView.open(); armBack(); } }, 'Tabel cu date'),
+      h('button', { type: 'button', class: 'primary', onclick: startDetect }, 'Detectare paleți'),
       h('button', { type: 'button', onclick: () => { closeSheet(); dataView.open('paleti'); armBack(); } }, 'Paleți'),
       h('button', { type: 'button', onclick: openEquipList }, 'Echipamente'),
       h('button', { type: 'button', onclick: openAddEquip }, 'Adaugă echipament'),
@@ -649,9 +650,11 @@ function setCursor(pid) {
 }
 
 function updateScanUi() {
-  const eq = !!scan.target;
-  $('scanLbl').textContent = eq ? store.getEquip(scan.target.equipId).name + ' · ' + scan.target.label : 'Poziția curentă';
-  if (eq) $('scanPos').textContent = 'scanează eticheta';
+  const eq = !!scan.target, det = !!(scan.target && scan.target.detect);
+  $('scanLbl').textContent = det ? 'Detectare paleți' : eq ? store.getEquip(scan.target.equipId).name + ' · ' + scan.target.label : 'Poziția curentă';
+  if (eq) $('scanPos').textContent = det ? 'scanează un modul' : 'scanează eticheta';
+  $('scanPanel').classList.toggle('detect', det);
+  document.body.classList.toggle('detecting', det);
   for (const id of ['dirBtn', 'orderBtn', 'skipBtn', 'undoBtn']) $(id).hidden = eq;
   $('dirBtn').textContent = scan.dir > 0 ? 'Spre est →' : '← Spre vest';
   $('orderBtn').textContent = scan.order === 'col' ? 'Sus-jos' : 'Pe rând';
@@ -684,7 +687,7 @@ async function startScan(pid, target) {
   armBack();
   scan.active = true; scan.target = target || null; scan.history = [];
   $('modInfo').hidden = true;
-  $('scanPanel').hidden = false; $('scanFab').hidden = true;
+  $('scanPanel').hidden = false; $('scanFab').hidden = true; $('detectFab').hidden = true;
   clearNotice(); scanMsg('', '');
   updateScanUi();
   updateInsets();
@@ -706,9 +709,76 @@ function stopScan() {
   const target = scan.target;
   stopCamera();
   scan.active = false; scan.target = null; scan.cursor = null; map.state.cursor = null;
-  $('scanPanel').hidden = true; $('scanFab').hidden = false;
+  $('scanPanel').hidden = true; $('scanFab').hidden = false; $('detectFab').hidden = false;
+  $('scanPanel').classList.remove('detect');
+  document.body.classList.remove('detecting');
   updateInsets(); map.invalidate();
-  if (target) openEquip(target.equipId);
+  if (target && target.equipId) openEquip(target.equipId);
+}
+
+// ---- Detectare paleți --------------------------------------------------------
+// Se scanează un modul (de exemplu după ce s-a rupt cartonul) și se află paletul, clasa și ce conține paletul.
+// Nimic nu se pune pe hartă. A doua serie din același palet confirmă identificarea.
+let detectLast = null;
+let detectHistory = [];                              // [{ palet, six, t }], cele mai noi primele
+
+function detectCode(code) {
+  const info = pal.lookup(code);
+  const box = $('modInfo');
+  if (!info) {
+    flash('dup'); scanMsg('dup', 'Seria nu e în listă');
+    $('scanPos').textContent = '—';
+    box.replaceChildren(h('div', { class: 'warn' }, 'Seria ' + code + ' nu este în lista de paleți. Verifică eticheta sau tastează ultimele 6 cifre.'), historyBox());
+    box.hidden = false; updateInsets();
+    return;
+  }
+  const p = pal.pallet(info.palet);
+  let confirm = null;
+  if (detectLast && detectLast.six !== info.six) {
+    confirm = detectLast.palet === info.palet
+      ? h('div', { class: 'okline' }, '✓ Confirmat: și seria ' + detectLast.six + ' e din paletul ' + info.palet + '.')
+      : h('div', { class: 'warn' }, 'Seria anterioară (' + detectLast.six + ') era din paletul ' + detectLast.palet + '. Dacă sunt pe același palet, verifică etichetele.');
+  } else if (!detectLast || detectLast.six === info.six) {
+    confirm = h('div', { class: 'muted' }, 'Pentru siguranță, scanează încă un modul de pe același palet.');
+  }
+  detectLast = { palet: info.palet, six: info.six };
+  detectHistory = [{ palet: info.palet, six: info.six, t: Date.now() }, ...detectHistory.filter((x) => x.palet !== info.palet)].slice(0, 50);
+  store.kvSet('detectHistory', detectHistory);
+  flash(info.broken ? 'dup' : 'ok');
+  scanMsg(info.broken ? 'dup' : 'ok', 'Seria ' + info.six + ' · ' + info.cls);
+  $('scanPos').textContent = 'Palet ' + info.palet;
+  box.replaceChildren(...[
+    h('div', { class: 'top' },
+      h('span', { class: 'cls', style: 'background:' + pal.classColor(info.cls) }, info.cls),
+      h('span', {}, 'Modulul scanat: ' + info.clsText)),
+    h('div', {}, h('strong', {}, 'Paletul ' + info.palet), ' (' + p.full + ') conține:'),
+    h('div', { class: 'top' }, Object.entries(p.counts).sort((a, b) => b[1] - a[1]).map(([c, n]) =>
+      h('span', { class: 'chipcls' }, h('span', { class: 'cls sm', style: 'background:' + pal.classColor(c) }, c), ' ' + n + ' module · ' + (PALETI_TXT[c] || '')))),
+    info.note ? h('div', { class: 'warn' }, 'Modulul ' + info.six + ': ' + info.note) : null,
+    p.note ? h('div', { class: 'warn' }, p.note) : null,
+    h('div', { class: 'muted' }, 'Scrie pe palet: „' + info.palet + ' – ' + Object.keys(p.counts).join(' + ') + '”. Montate deja: ' + p.mounted + ' din ' + p.mods.length + '.'),
+    confirm,
+    h('div', {}, h('button', { type: 'button', class: 'link', onclick: () => { stopScan(); openPallet(info.palet); } }, 'Vezi toate cele ' + p.mods.length + ' module ale paletului')),
+    historyBox(info.palet),
+  ].filter(Boolean));
+  box.hidden = false; updateInsets();
+}
+const PALETI_TXT = { '720L': '720 W, curent mic', '715L': '715 W, curent mic', '710H': '710 W, curent mare', '710L': '710 W, curent mic' };
+
+function historyBox(skip) {
+  const list = detectHistory.filter((x) => x.palet !== skip).slice(0, 6);
+  if (!list.length) return null;
+  return h('div', { class: 'muted' }, 'Detectate înainte: ', list.map((x, i) => [i ? ', ' : '',
+    h('button', { type: 'button', class: 'link', onclick: () => { stopScan(); openPallet(x.palet); } }, x.palet + ' (' + Object.keys(pal.pallet(x.palet).counts).join('+') + ')')]).flat());
+}
+
+function startDetect() {
+  detectLast = null;
+  startScan(null, { detect: true }).then(() => {
+    const box = $('modInfo');
+    box.replaceChildren(...[h('div', {}, 'Scanează codul de bare de pe un modul. Afli din ce palet face parte și ce tipuri de module sunt în acel palet.'), historyBox()].filter(Boolean));
+    box.hidden = false; updateInsets();
+  });
 }
 
 // Caseta din scanare: clasa (putere + intensitate), paletul și ce conține paletul.
@@ -761,6 +831,7 @@ function handleCode(raw, src) {
   if (!scan.active || !code) return;
   clearNotice();
   if (!scan.target) code = pal.normalize(code);         // „000716” tastat devine seria completă
+  if (scan.target && scan.target.detect) { detectCode(pal.normalize(code)); return; }
   if (scan.target) {
     store.setEquip(scan.target.equipId, { [scan.target.key]: code });
     flash('ok'); toast(scan.target.label + ': ' + code);
@@ -794,6 +865,7 @@ $('scanFab').addEventListener('click', () => {
   startScan(pid);
 });
 $('scanDone').addEventListener('click', stopScan);
+$('detectFab').addEventListener('click', startDetect);
 $('camStart').addEventListener('click', startCamera);
 $('scanManual').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -865,6 +937,7 @@ store.onChange((what) => {
   await store.init();
   const prefs = await store.kvGet('scanPrefs');
   if (prefs) { scan.dir = prefs.dir === -1 ? -1 : 1; scan.order = prefs.order === 'row' ? 'row' : 'col'; }
+  detectHistory = (await store.kvGet('detectHistory')) || [];
   const dev = await store.kvGet('device');
   store.setDeviceName(dev && dev.name ? dev.name : (matchMedia('(pointer: coarse)').matches ? 'Telefon ' : 'Laptop ') + Math.floor(100 + Math.random() * 900));
   if (!dev || !dev.name) await store.kvSet('device', { name: store.deviceName });

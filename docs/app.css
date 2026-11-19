@@ -58,7 +58,7 @@ textarea { min-height: 72px; resize: vertical; }
 .mapctl { position: absolute; left: max(10px, env(safe-area-inset-left, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
 .seg { display: flex; border-radius: 10px; overflow: hidden; border: 1.5px solid var(--line); background: var(--surface); }
 .seg button { border: 0; border-radius: 0; min-height: 40px; font-size: 13px; }
-.zoomctl { position: absolute; right: max(10px, env(safe-area-inset-right, 0px)); bottom: calc(76px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 6px; }
+.zoomctl { position: absolute; right: max(10px, env(safe-area-inset-right, 0px)); bottom: calc(136px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 6px; }
 .zoomctl button { min-width: 44px; padding: 0; font-size: 20px; }
 .fab {
   position: absolute; right: max(10px, env(safe-area-inset-right, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px));
@@ -194,3 +194,11 @@ textarea { min-height: 72px; resize: vertical; }
   body.sheet-open .fab, body.sheet-open .zoomctl { right: 412px; }
 }
 .modinfo button.link { display: inline; min-height: 0; padding: 0; border: 0; background: none; color: var(--select); font-weight: 700; text-decoration: underline; }
+
+.fab.fab2 { bottom: calc(74px + env(safe-area-inset-bottom, 0px)); background: var(--surface); border-color: var(--line); color: var(--ink); min-height: 48px; font-size: 15px; padding: 0 16px; }
+.okline { color: var(--ok); font-weight: 700; }
+.chipcls { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+#scanPanel.detect { bottom: 0; }
+#scanPanel.detect .scanpos strong { color: var(--ink); font-size: 26px; }
+@media (min-width: 900px) { #scanPanel.detect { bottom: auto; } }
+body.detecting .zoomctl, body.detecting .mapctl { display: none; }
