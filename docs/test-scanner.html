@@ -695,6 +695,16 @@ details button { margin-bottom: 14px; }
         if (formats.length) detector = new window.BarcodeDetector({ formats });
       }
     } catch (e) { detector = null; }
+    if (!detector) {                                  // fără cititor nativ: ZXing, inclus în aplicație
+      try {
+        await new Promise((res, rej) => { const el = document.createElement('script'); el.src = 'vendor/barcode-detector.js'; el.onload = res; el.onerror = rej; document.head.append(el); });
+        const api = window.BarcodeDetectionAPI, wasm = new URL('vendor/zxing_reader.wasm', location.href).href;
+        api.setZXingModuleOverrides({ locateFile: (p, prefix) => (p.endsWith('.wasm') ? wasm : prefix + p) });
+        formats = ['code_128', 'code_39', 'itf', 'ean_13', 'qr_code', 'data_matrix'];
+        detector = new api.BarcodeDetector({ formats });
+        formats = formats.map((f) => f + ' (ZXing)');
+      } catch (e) { detector = null; }
+    }
     if (!detector) {
       banner('Browserul acesta nu are cititor de coduri de bare. Deschide pagina în Chrome pe Android. Poți totuși introduce coduri manual.');
       $('startBtn').disabled = true;

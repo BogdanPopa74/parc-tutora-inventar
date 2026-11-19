@@ -668,6 +668,7 @@ async function startCamera() {
   if (res.cancelled || !scan.active) return;
   if (!res.ok) { $('camMsg').textContent = res.error; $('idle').hidden = false; $('reticle').hidden = true; return; }
   $('idle').hidden = true; $('reticle').hidden = false;
+  $('scanLbl').title = 'Cititor: ' + scanner.info.engine;
   $('torchBtn').hidden = !res.torch; $('torchBtn').setAttribute('aria-pressed', 'false');
   if (res.zoom) {
     const z = $('camZoom');
@@ -700,7 +701,7 @@ async function startScan(pid, target) {
     } else { setCursor(null); scanMsg('', 'Atinge pe hartă panoul de la care începi.'); }
   }
   if (await scanner.ready) await startCamera();
-  else { $('camMsg').textContent = 'Acest browser nu are cititor de coduri. Scrie codul mai jos sau folosește un scanner Bluetooth / USB.'; $('camStart').hidden = true; if (isWide()) $('scanInput').focus(); }
+  else { $('camMsg').textContent = 'Cititorul de coduri nu a putut porni în acest browser. Scrie codul mai jos sau folosește „Din poză”.'; $('camStart').hidden = true; if (isWide()) $('scanInput').focus(); }
   updateInsets();
   if (scan.cursor) map.showPanel(scan.cursor, map.panelScale());
 }
@@ -865,6 +866,30 @@ $('scanFab').addEventListener('click', () => {
   startScan(pid);
 });
 $('scanDone').addEventListener('click', stopScan);
+
+// Poză cu rezoluție completă: merge mai bine la etichete mici sau în soare puternic.
+$('photoInput').addEventListener('change', async () => {
+  const inp = $('photoInput'), file = inp.files && inp.files[0];
+  inp.value = '';
+  if (!file || !scan.active) return;
+  scanMsg('', 'Caut coduri în poză…');
+  const codes = await scanner.detectFile(file);
+  if (!codes.length) { flash('dup'); scanMsg('dup', 'Niciun cod găsit în poză. Apropie-te la 15–30 cm, ține telefonul drept și evită reflexia.'); return; }
+  if (scan.target && scan.target.detect) {
+    const infos = codes.map((c) => pal.lookup(pal.normalize(c))).filter(Boolean);
+    detectCode(pal.normalize(codes[0]));
+    if (codes.length > 1) {                          // mai multe etichete în poză: din ce paleți sunt
+      const per = {};
+      for (const i of infos) per[i.palet] = (per[i.palet] || 0) + 1;
+      const txt = Object.entries(per).map(([p, n]) => n + ' din paletul ' + p).join(', ');
+      $('modInfo').prepend(h('div', { class: Object.keys(per).length > 1 ? 'warn' : 'okline' },
+        'În poză: ' + codes.length + ' coduri' + (txt ? ' — ' + txt : '') + (infos.length < codes.length ? ', ' + (codes.length - infos.length) + ' necunoscute' : '') + '.'));
+    }
+    return;
+  }
+  handleCode(codes[0], 'poză');
+  if (codes.length > 1) toast('În poză erau ' + codes.length + ' coduri; l-am luat pe cel din mijloc.');
+});
 $('detectFab').addEventListener('click', startDetect);
 $('camStart').addEventListener('click', startCamera);
 $('scanManual').addEventListener('submit', (e) => {

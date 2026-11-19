@@ -18,15 +18,26 @@ for (const [pal, p] of Object.entries(PALETI.paleti)) {
 }
 export const palletIds = [...palletMods.keys()];
 
-// Seria completă din ce s-a citit sau tastat: codul de bare întreg, sau doar ultimele 6 cifre.
+// Seria completă din ce s-a citit sau tastat. Etichetele de pe ramă au și clasa de curent la final
+// („A161098744B97012353-L”), uneori cu spațiu; se păstrează doar seria. Merg și doar ultimele 6 cifre.
+const SERIAL_RE = new RegExp(PALETI.prefixSerie + '\\s*(\\d{6})', 'i');
 export function normalize(code) {
-  const c = String(code || '').trim().toUpperCase();
-  if (/^\d{6}$/.test(c) && bySerial.has(c)) return PALETI.prefixSerie + c;
+  const c = String(code || '').trim().toUpperCase().replace(/[\u0000-\u001f]/g, '');
+  const m = c.match(SERIAL_RE);
+  if (m) return PALETI.prefixSerie + m[1];
+  const six = c.match(/^(\d{6})(\s*-\s*[LH])?$/);
+  if (six && bySerial.has(six[1])) return PALETI.prefixSerie + six[1];
   return c;
+}
+// Litera de pe etichetă (L sau H), dacă a fost citită.
+export function labelCurrent(code) {
+  const m = String(code || '').toUpperCase().match(/\d{6}\s*-\s*([LH])\s*$/);
+  return m ? m[1] : '';
 }
 function sixOf(sn) {
   const c = String(sn || '').trim().toUpperCase();
-  if (c.startsWith(PALETI.prefixSerie) && c.length === PALETI.prefixSerie.length + 6) return c.slice(-6);
+  const m = c.match(SERIAL_RE);
+  if (m) return m[1];
   if (/^\d{6}$/.test(c)) return c;
   return null;
 }

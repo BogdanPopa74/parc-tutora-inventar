@@ -1,8 +1,31 @@
 // Cititorul de coduri de bare: camera telefonului + BarcodeDetector (nativ în Chrome pe Android).
+// Pe lângă cititorul nativ există ZXing (docs/vendor), folosit când nativul lipsește sau nu găsește
+// nimic: se aplică pe zona din chenar la rezoluția completă a camerei, ceea ce ajută la etichete mici.
 const WANTED = ['code_128', 'code_39', 'code_93', 'codabar', 'itf', 'ean_13', 'ean_8',
   'upc_a', 'upc_e', 'qr_code', 'data_matrix', 'pdf417', 'aztec'];
 const RETICLE = { w: 0.86, h: 0.44 };   // la fel ca în CSS (.reticle)
 const CONFIRM_FRAMES = 2, CONFIRM_WINDOW = 700, HOLD_MS = 2500;
+
+const ZX_FORMATS = ['code_128', 'code_39', 'code_93', 'itf', 'ean_13', 'qr_code', 'data_matrix'];
+let zxPromise = null;
+export function loadZxing() {
+  if (zxPromise) return zxPromise;
+  zxPromise = new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = 'vendor/barcode-detector.js';
+    el.onload = () => {
+      try {
+        const api = window.BarcodeDetectionAPI;
+        const wasm = new URL('vendor/zxing_reader.wasm', location.href).href;
+        api.setZXingModuleOverrides({ locateFile: (path, prefix) => (path.endsWith('.wasm') ? wasm : prefix + path) });
+        resolve(new api.BarcodeDetector({ formats: ZX_FORMATS }));
+      } catch (e) { reject(e); }
+    };
+    el.onerror = reject;
+    document.head.append(el);
+  }).catch(() => null);
+  return zxPromise;
+}
 
 let audio = null;
 export function beep(kind) {
@@ -22,7 +45,9 @@ export function beep(kind) {
 
 export function createScanner(els, onCode) {
   const { video, overlay, viewer } = els;
-  let detector = null, stream = null, track = null, caps = {};
+  let detector = null, zx = null, stream = null, track = null, caps = {};
+  let lastHit = 0, frame = 0, crop = null;
+  const info = { engine: '', native: false, zxing: false, lastEngine: '' };
   let running = false, wakeLock = null;
   let pending = { code: null, n: 0, t: 0 }, held = { code: null, seen: 0 };
 
@@ -31,11 +56,28 @@ export function createScanner(els, onCode) {
       if ('BarcodeDetector' in window) {
         const supported = await window.BarcodeDetector.getSupportedFormats();
         const formats = WANTED.filter((f) => supported.includes(f));
-        if (formats.length) detector = new window.BarcodeDetector({ formats });
+        if (formats.includes('code_128')) detector = new window.BarcodeDetector({ formats });
       }
     } catch (e) { detector = null; }
-    return !!detector;
+    info.native = !!detector;
+    zx = await loadZxing();                          // al doilea cititor, mereu disponibil (și fără internet)
+    info.zxing = !!zx;
+    info.engine = detector && zx ? 'nativ + ZXing' : detector ? 'nativ' : zx ? 'ZXing' : '';
+    return !!(detector || zx);
   })();
+
+  // Zona din chenar, la rezoluția completă a camerei, desenată pe o pânză pentru ZXing.
+  function cropReticle(g) {
+    const sx = Math.max(0, Math.floor(g.rx0)), sy = Math.max(0, Math.floor(g.ry0));
+    const sw = Math.min(video.videoWidth - sx, Math.ceil(g.rx1 - g.rx0)), sh = Math.min(video.videoHeight - sy, Math.ceil(g.ry1 - g.ry0));
+    if (sw < 10 || sh < 10) return null;
+    crop = crop || document.createElement('canvas');
+    if (crop.width !== sw || crop.height !== sh) { crop.width = sw; crop.height = sh; }
+    crop.getContext('2d', { willReadFrequently: true }).drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+    return { canvas: crop, sx, sy };
+  }
+  const shift = (b, dx, dy) => ({ ...b, boundingBox: { x: b.boundingBox.x + dx, y: b.boundingBox.y + dy, width: b.boundingBox.width, height: b.boundingBox.height },
+    cornerPoints: (b.cornerPoints || []).map((p) => ({ x: p.x + dx, y: p.y + dy })) });
 
   function geometry() {
     const cw = viewer.clientWidth, ch = viewer.clientHeight, vw = video.videoWidth, vh = video.videoHeight;
@@ -103,9 +145,17 @@ export function createScanner(els, onCode) {
 
   async function tick() {
     if (!running) return;
-    if (video.readyState >= 2 && detector) {
+    if (video.readyState >= 2 && (detector || zx)) {
       let found = [];
-      try { found = await detector.detect(video); } catch (e) { /* cadru sărit */ }
+      frame++;
+      if (detector) { try { found = await detector.detect(video); if (found.length) info.lastEngine = 'nativ'; } catch (e) { /* cadru sărit */ } }
+      // ZXing: când nu există cititor nativ, sau când nativul n-a găsit nimic de peste o secundă (din 2 în 2 cadre)
+      const g = geometry();
+      if (!found.length && zx && g && (!detector || (performance.now() - lastHit > 1000 && frame % 2 === 0))) {
+        const c = cropReticle(g);
+        if (c) { try { found = (await zx.detect(c.canvas)).map((b) => shift(b, c.sx, c.sy)); if (found.length) info.lastEngine = 'ZXing'; } catch (e) { /* cadru sărit */ } }
+      }
+      if (found.length) lastHit = performance.now();
       if (running) handle(found);
     }
     schedule();
@@ -143,7 +193,7 @@ export function createScanner(els, onCode) {
       track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
     }
     running = true;
-    pending = { code: null, n: 0, t: 0 };
+    pending = { code: null, n: 0, t: 0 }; held = { code: null, seen: 0 };
     schedule();
     try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* opțional */ }
     return { ok: true, torch: !!caps.torch, zoom: caps.zoom && caps.zoom.max > caps.zoom.min ? caps.zoom : null };
@@ -160,8 +210,28 @@ export function createScanner(els, onCode) {
     if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
   }
 
+  // Codurile dintr-o poză (rezoluție completă): cele mai apropiate de centru primele.
+  async function detectFile(file) {
+    await ready;
+    let bmp;
+    try { bmp = await createImageBitmap(file); } catch (e) { return []; }
+    const all = [];
+    for (const d of [detector, zx]) {
+      if (!d) continue;
+      try { for (const b of await d.detect(bmp)) if (b.rawValue) all.push(b); } catch (e) { /* încercăm celălalt */ }
+    }
+    const cx = bmp.width / 2, cy = bmp.height / 2;
+    if (bmp.close) bmp.close();
+    const seen = new Map();
+    for (const b of all) {
+      const c = centerOf(b), d = (c.x - cx) ** 2 + (c.y - cy) ** 2, v = b.rawValue.trim();
+      if (!seen.has(v) || seen.get(v) > d) seen.set(v, d);
+    }
+    return [...seen].sort((a, b) => a[1] - b[1]).map(([v]) => v);
+  }
+
   return {
-    ready, start, stop,
+    ready, start, stop, detectFile, info,
     get running() { return running; },
     release() { held = { code: null, seen: 0 }; },      // permite recitirea imediată a aceluiași cod
     async setTorch(on) { if (!track) return false; try { await track.applyConstraints({ advanced: [{ torch: on }] }); return true; } catch (e) { return false; } },
