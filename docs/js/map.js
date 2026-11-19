@@ -1,6 +1,7 @@
 // Harta parcului: desen pe canvas, cu deplasare, zoom și selecție prin atingere.
 import { PARC } from '../parc-data.js';
 import * as store from './store.js';
+import { lookup, classColor, tableClasses } from './paleti.js';
 
 export const INV_COLORS = ['#e6194b', '#f58231', '#b8960a', '#2e9e45', '#149c9c', '#3f63d8', '#8e24aa', '#d6409f', '#8a5a2b',
   '#5b6b7a', '#7cb518', '#c1121f', '#0077b6', '#6a4c93', '#bc6c25', '#2a9d8f'];
@@ -157,12 +158,18 @@ export function createMap(canvas, onTap) {
       ctx.globalAlpha = 0.6 + 0.4 * done;
       ctx.fillRect(x, y, w, h);
       ctx.globalAlpha = 1;
+    } else if (state.mode === 'clase') {
+      const cls = Object.entries(tableClasses(t.id));
+      ctx.fillStyle = css.empty; ctx.fillRect(x, y, w, h);
+      let px = x;
+      for (const [c, n] of cls.sort((a, b) => b[1] - a[1])) { const pw2 = w * n / (PARC.cols * PARC.tiers); ctx.fillStyle = classColor(c); ctx.fillRect(px, y, pw2, h); px += pw2; }
+      if (cls.length > 1) { ctx.strokeStyle = '#ff2d55'; ctx.lineWidth = 3; ctx.strokeRect(x - 1.5, y - 1.5, w + 3, h + 3); }
     } else {
       ctx.fillStyle = css.empty; ctx.fillRect(x, y, w, h);
       if (done > 0) { ctx.fillStyle = css.ok; ctx.fillRect(x, y, w * done, h); }
     }
     if (h >= 11 && w >= 60) {
-      ctx.fillStyle = state.mode === 'inv' ? '#fff' : (done > 0.5 ? css.okInk : css.ink);
+      ctx.fillStyle = state.mode !== 'progres' && done > 0.5 ? '#fff' : (done > 0.5 ? css.okInk : css.ink);
       ctx.font = '600 ' + Math.min(12, Math.round(h * 0.7)) + 'px system-ui, sans-serif';
       ctx.fillText(t.id, x + w / 2, y + h / 2 + 0.5);
     }
@@ -178,18 +185,27 @@ export function createMap(canvas, onTap) {
         const x = tx0 + c * pw, y = ty0 + tier * ph;
         if (x > cw || x + pw < 0) continue;
         const sn = store.getSn(store.panelId(t.id, tier, c));
+        const info = state.mode === 'clase' && sn ? lookup(sn) : null;
         if (state.mode === 'inv') {
           ctx.fillStyle = col; ctx.globalAlpha = sn ? 1 : 0.28;
           ctx.fillRect(x + gap / 2, y + gap / 2, pw - gap, ph - gap);
           ctx.globalAlpha = 1;
+        } else if (state.mode === 'clase') {
+          ctx.fillStyle = info ? classColor(info.cls) : sn ? '#555' : css.empty;
+          ctx.fillRect(x + gap / 2, y + gap / 2, pw - gap, ph - gap);
+          if (info && info.broken) { ctx.strokeStyle = '#ff2d55'; ctx.lineWidth = 2; ctx.strokeRect(x + gap, y + gap, pw - 2 * gap, ph - 2 * gap); }
         } else {
           ctx.fillStyle = sn ? css.ok : css.empty;
           ctx.fillRect(x + gap / 2, y + gap / 2, pw - gap, ph - gap);
         }
         if (!showText) continue;
-        const ink = state.mode === 'inv' ? (sn ? '#fff' : css.ink) : (sn ? css.okInk : css.muted);
+        const ink = state.mode !== 'progres' ? (sn ? '#fff' : css.ink) : (sn ? css.okInk : css.muted);
         ctx.fillStyle = ink;
-        if (sn) {
+        if (info && ph >= 40) {                      // în modul „Clase” se scrie clasa, nu seria
+          ctx.save(); ctx.translate(x + pw / 2, y + ph / 2); ctx.rotate(-Math.PI / 2);
+          ctx.font = '700 ' + Math.min(14, Math.max(8, pw * 0.42)) + 'px system-ui, sans-serif';
+          ctx.fillText(info.cls, 0, 0.5); ctx.restore();
+        } else if (sn) {
           const size = Math.min(14, Math.max(8, pw * 0.42));
           const fits = Math.floor((ph - 8) / (size * 0.62));
           const text = sn.length > fits ? '…' + sn.slice(-(Math.max(3, fits - 1))) : sn;

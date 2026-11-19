@@ -3,6 +3,7 @@ import { PARC } from '../parc-data.js';
 import * as store from './store.js';
 import { invColor } from './map.js';
 import { TYPE_NAMES, fieldsOf } from './io.js';
+import * as pal from './paleti.js';
 
 const PAGE = 200;
 const invName = (n) => 'INV' + String(n).padStart(2, '0');
@@ -21,8 +22,8 @@ function h(tag, props, ...kids) {
   return el;
 }
 
-export function createDataView(root, { onPanel, onEquip }) {
-  const f = { tab: 'panouri', q: '', row: '', inv: '', status: 'toate', sort: 'pozitie', limit: PAGE };
+export function createDataView(root, { onPanel, onEquip, onPallet }) {
+  const f = { tab: 'panouri', q: '', row: '', inv: '', cls: '', status: 'toate', sort: 'pozitie', limit: PAGE };
   const body = root.querySelector('#dvBody'), summary = root.querySelector('#dvSummary'), filters = root.querySelector('#dvFilters');
   let timer = 0;
 
@@ -31,13 +32,16 @@ export function createDataView(root, { onPanel, onEquip }) {
     h('option', { value: '' }, 'Toate rândurile'), [...new Set(PARC.tables.map((t) => t.row))].map((r) => h('option', { value: r }, 'Rândul ' + r)));
   const invSel = h('select', { 'aria-label': 'Invertor', onchange: () => { f.inv = invSel.value; f.limit = PAGE; draw(); } });
   const statusSel = h('select', { 'aria-label': 'Stare', onchange: () => { f.status = statusSel.value; f.limit = PAGE; draw(); } },
-    [['toate', 'Toate'], ['scanate', 'Scanate'], ['nescanate', 'Nescanate'], ['dubluri', 'Dubluri']].map(([v, t]) => h('option', { value: v }, t)));
+    [['toate', 'Toate'], ['scanate', 'Scanate'], ['nescanate', 'Nescanate'], ['dubluri', 'Dubluri'], ['probleme', 'De verificat (clase amestecate, serii necunoscute, sparte)']].map(([v, t]) => h('option', { value: v }, t)));
+  const clsSel = h('select', { 'aria-label': 'Clasă', onchange: () => { f.cls = clsSel.value; f.limit = PAGE; draw(); } },
+    h('option', { value: '' }, 'Toate clasele'), pal.CLASSES.map((c) => h('option', { value: c }, c)));
   const sortSel = h('select', { 'aria-label': 'Ordine', onchange: () => { f.sort = sortSel.value; draw(); } },
     h('option', { value: 'pozitie' }, 'În ordinea pozițiilor'), h('option', { value: 'recente' }, 'Cele mai recente primele'));
   const tabP = h('button', { type: 'button', onclick: () => setTab('panouri') }, 'Panouri');
   const tabE = h('button', { type: 'button', onclick: () => setTab('echipamente') }, 'Echipamente');
-  root.querySelector('#dvTabs').replaceChildren(tabP, tabE);
-  filters.replaceChildren(search, rowSel, invSel, statusSel, sortSel);
+  const tabL = h('button', { type: 'button', onclick: () => setTab('paleti') }, 'Paleți');
+  root.querySelector('#dvTabs').replaceChildren(tabP, tabL, tabE);
+  filters.replaceChildren(search, rowSel, invSel, clsSel, statusSel, sortSel);
 
   function setTab(tab) { f.tab = tab; f.limit = PAGE; draw(); }
 
@@ -51,6 +55,7 @@ export function createDataView(root, { onPanel, onEquip }) {
     const dups = new Map();
     for (const d of store.findDuplicates()) for (const pid of d.pids) dups.set(pid, d.pids.length);
     const rows = [];
+    const mixed = f.status === 'probleme' ? new Set(pal.mixedTables()) : null;
     for (const base of PARC.tables) {
       const t = store.getTable(base.id);
       if (f.row && String(t.row) !== f.row) continue;
@@ -61,8 +66,11 @@ export function createDataView(root, { onPanel, onEquip }) {
           if (f.status === 'scanate' && !sn) continue;
           if (f.status === 'nescanate' && sn) continue;
           if (f.status === 'dubluri' && !dups.has(pid)) continue;
+          const info = sn ? pal.lookup(sn) : null;
+          if (f.cls && (!info || info.cls !== f.cls)) continue;
+          if (mixed && !(sn && (!info || info.broken || dups.has(pid) || mixed.has(t.id)))) continue;
           if (f.q && !sn.toLowerCase().includes(f.q) && !pid.toLowerCase().includes(f.q)) continue;
-          rows.push({ pid, sn, t, rec, dup: dups.has(pid) });
+          rows.push({ pid, sn, t, rec, dup: dups.has(pid), info });
         }
       }
     }
@@ -91,10 +99,27 @@ export function createDataView(root, { onPanel, onEquip }) {
     if (root.hidden) return;
     tabP.setAttribute('aria-pressed', String(f.tab === 'panouri'));
     tabE.setAttribute('aria-pressed', String(f.tab === 'echipamente'));
+    tabL.setAttribute('aria-pressed', String(f.tab === 'paleti'));
     filters.hidden = f.tab !== 'panouri';
     fillInverters();
     const scroll = body.scrollTop;
-    if (f.tab === 'echipamente') {
+    if (f.tab === 'paleti') {
+      drawSummary(store.findDuplicates().length);
+      const list = pal.palletIds.map((id) => pal.pallet(id));
+      const done = list.filter((p) => p.mounted === p.mods.length).length, started = list.filter((p) => p.mounted && p.mounted < p.mods.length).length;
+      const rows = list.map((p) => {
+        const tables = [...new Set(p.mods.filter((m) => m.pid).map((m) => m.pid.slice(0, 7)))];
+        return h('tr', { tabindex: '0', onclick: () => onPallet(p.id), onkeydown: (ev) => { if (ev.key === 'Enter') onPallet(p.id); } },
+          h('td', { class: 'mono' }, p.id),
+          h('td', {}, Object.keys(p.counts).map((c) => h('span', { class: 'cls sm', style: 'background:' + pal.classColor(c) + ';margin-right:4px' }, c))),
+          h('td', {}, pal.countsText(p.counts)),
+          h('td', { class: 'num' }, p.mounted + ' / ' + p.mods.length),
+          h('td', {}, tables.join(', ')), h('td', { class: p.note ? 'warnline' : '' }, p.note));
+      });
+      body.replaceChildren(
+        h('p', { class: 'muted' }, list.length + ' paleți · ' + pal.TOTAL_MODULES + ' module · ' + done + ' montați complet, ' + started + ' începuți, ' + (list.length - done - started) + ' neatinși.'),
+        h('table', {}, h('thead', {}, h('tr', {}, ['Palet', 'Clasă', 'Conține', 'Montate', 'Mese', 'Observații'].map((c) => h('th', {}, c)))), h('tbody', {}, rows)));
+    } else if (f.tab === 'echipamente') {
       drawSummary(store.findDuplicates().length);
       const rows = store.listEquip().map((e) => {
         const info = fieldsOf(e.type).filter(([key]) => e[key]).map(([key, label]) => label + ': ' + e[key])
@@ -110,11 +135,13 @@ export function createDataView(root, { onPanel, onEquip }) {
       const shown = rows.slice(0, f.limit);
       const trs = shown.map((r) => h('tr', { tabindex: '0', class: r.dup ? 'dup' : '', onclick: () => onPanel(r.pid), onkeydown: (ev) => { if (ev.key === 'Enter') onPanel(r.pid); } },
         h('td', { class: 'mono' }, r.pid), h('td', { class: 'mono sn' }, r.sn || '—'),
+        h('td', {}, r.info ? h('span', { class: 'cls sm', style: 'background:' + pal.classColor(r.info.cls) }, r.info.cls) : r.sn ? h('span', { class: 'warnline' }, 'necunoscută') : ''),
+        h('td', { class: 'mono' }, r.info ? r.info.palet : ''),
         h('td', {}, h('span', { class: 'swatch', style: 'background:' + invColor(r.t.inv) }), ' ' + invName(r.t.inv)),
         h('td', { class: 'num' }, String(r.t.str)), h('td', {}, r.sn ? when(r.rec.t) : ''), h('td', {}, r.sn ? (r.rec.by || r.rec.src || '') : '')));
       body.replaceChildren(...[
         h('p', { class: 'muted' }, rows.length + (rows.length === 1 ? ' panou' : ' panouri') + (shown.length < rows.length ? ', afișate primele ' + shown.length : '') + '. Apasă pe un rând ca să îl vezi pe hartă.'),
-        h('table', {}, h('thead', {}, h('tr', {}, ['Poziție', 'Serie', 'Invertor', 'String', 'Scanat', 'De cine'].map((c) => h('th', {}, c)))), h('tbody', {}, trs)),
+        h('table', {}, h('thead', {}, h('tr', {}, ['Poziție', 'Serie', 'Clasă', 'Palet', 'Invertor', 'String', 'Scanat', 'De cine'].map((c) => h('th', {}, c)))), h('tbody', {}, trs)),
         shown.length < rows.length ? h('button', { type: 'button', onclick: () => { f.limit += PAGE * 2; draw(); } }, 'Arată mai multe') : null,
       ].filter(Boolean));
     }
@@ -128,7 +155,7 @@ export function createDataView(root, { onPanel, onEquip }) {
   });
 
   return {
-    open() { root.hidden = false; draw(); },
+    open(tab) { if (tab) { f.tab = tab; f.limit = PAGE; } root.hidden = false; draw(); },
     close() { root.hidden = true; },
     get isOpen() { return !root.hidden; },
   };

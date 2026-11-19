@@ -5,6 +5,7 @@ import * as io from './io.js';
 import { createMap, invColor } from './map.js';
 import { createScanner, beep } from './scanner.js';
 import * as sync from './sync.js';
+import * as pal from './paleti.js';
 import { createDataView } from './dataview.js';
 
 const $ = (id) => document.getElementById(id);
@@ -150,6 +151,7 @@ function reopen() {
   else if (kind === 'menu') openMenu();
   else if (kind === 'equipList') openEquipList();
   else if (kind === 'sync') openSync();
+  else if (kind === 'pallet') openPallet(id);
 }
 
 function field(label, control) { return h('label', { class: 'field' }, h('span', {}, label), control); }
@@ -159,7 +161,7 @@ function openPanel(pid, keepView) {
   const t = store.getTable(tableId), rec = store.panels.get(pid) || {};
   const input = h('input', { type: 'text', class: 'mono', value: rec.sn || '', autocapitalize: 'characters', spellcheck: 'false', placeholder: 'nescanat',
     onchange: () => {
-      const v = input.value.trim(), at = v && store.snIndex.get(v);
+      const v = pal.normalize(input.value), at = v && store.snIndex.get(v);
       if (at && at !== pid) { toast('Seria e deja la ' + at); input.value = rec.sn || ''; return; }
       store.setPanel(pid, v, v ? 'tastat' : '');
     } });
@@ -169,6 +171,7 @@ function openPanel(pid, keepView) {
       h('dt', {}, 'Poziție'), h('dd', {}, (tier === 0 ? 'sus' : 'jos') + ', panoul ' + (col + 1) + ' din ' + PARC.cols),
       h('dt', {}, 'Invertor'), h('dd', {}, invName(t.inv) + ', string ' + t.str)),
     field('Serie panou', input),
+    panelModule(rec.sn, pid),
     rec.sn ? h('p', { class: 'muted' }, 'Scanat ' + new Date(rec.t).toLocaleString('ro-RO') + (rec.src ? ' · ' + rec.src : '') + (rec.by ? ' · de ' + rec.by : '')) : null,
     h('div', { class: 'btns' },
       h('button', { type: 'button', class: 'primary', onclick: () => startScan(pid) }, 'Scanează de aici'),
@@ -176,6 +179,39 @@ function openPanel(pid, keepView) {
       rec.sn ? confirmButton('Șterge seria', 'Sigur? Apasă din nou', () => store.setPanel(pid, '', '')) : null),
   ], { kind: 'panel', id: pid });
   if (!keepView) map.showPanel(pid);
+}
+
+function panelModule(sn, pid) {
+  if (!sn) return null;
+  const info = pal.lookup(sn);
+  if (!info) return h('div', { class: 'banner' }, 'Seria nu este în lista de paleți.');
+  const p = pal.pallet(info.palet);
+  const mix = Object.keys(pal.tableClasses(pid.slice(0, 7), pid)).filter((c) => c !== info.cls);
+  return h('div', { class: 'modinfo' },
+    h('div', { class: 'top' }, h('span', { class: 'cls', style: 'background:' + pal.classColor(info.cls) }, info.cls), h('span', {}, info.clsText)),
+    h('div', {}, 'Palet ', h('button', { type: 'button', class: 'link', onclick: () => openPallet(info.palet) }, info.palet), ' (' + info.paletFull + ') · ' + pal.countsText(p.counts)),
+    info.note ? h('div', { class: info.broken || info.separate ? 'warn' : '' }, info.note) : null,
+    mix.length ? h('div', { class: 'warn' }, 'Pe aceeași masă sunt și module ' + mix.join(', ') + '.') : null);
+}
+
+// Fișa unui palet: ce clase conține, câte module sunt montate și unde.
+function openPallet(id) {
+  const p = pal.pallet(id);
+  if (!p) { toast('Paletul ' + id + ' nu este în listă'); return; }
+  const tables = [...new Set(p.mods.filter((m) => m.pid).map((m) => m.pid.slice(0, 7)))];
+  openSheet('Palet ' + p.id, [
+    h('dl', { class: 'kv' },
+      h('dt', {}, 'Număr complet'), h('dd', { class: 'mono' }, p.full),
+      h('dt', {}, 'Conține'), h('dd', {}, pal.countsText(p.counts)),
+      h('dt', {}, 'Montate'), h('dd', {}, p.mounted + ' din ' + p.mods.length + (tables.length ? ' · mesele ' + tables.join(', ') : ''))),
+    p.note ? h('div', { class: 'banner' }, p.note) : null,
+    h('h3', {}, 'Modulele paletului'),
+    h('ul', { class: 'list' }, p.mods.map((m) => h('li', {},
+      h('span', { class: 'cls sm', style: 'background:' + pal.classColor(m.cls) }, m.cls),
+      m.pid ? h('button', { type: 'button', class: 'link mono', onclick: () => { openPanel(m.pid); map.showPanel(m.pid, map.panelScale()); } }, m.six + ' → ' + m.pid)
+        : h('span', { class: 'mono', style: 'flex:1' }, m.six),
+      h('small', { class: m.note ? 'warnline' : '' }, m.note ? m.note.replace(/^Palet cu două clase — /, '') : m.pid ? '' : 'nemontat')))),
+  ], { kind: 'pallet', id });
 }
 
 function openTable(tid, keepView) {
@@ -337,7 +373,7 @@ $('placeCancel').addEventListener('click', () => {
 
 function openSearch() {
   const results = h('ul', { class: 'list' });
-  const input = h('input', { type: 'text', class: 'mono', placeholder: 'Serie sau nume', spellcheck: 'false', oninput: () => run() });
+  const input = h('input', { type: 'text', class: 'mono', placeholder: 'Serie, palet, masă sau nume', spellcheck: 'false', oninput: () => run() });
   const run = () => {
     const q = input.value.trim().toLowerCase();
     const out = [];
@@ -351,6 +387,10 @@ function openSearch() {
         if (text.includes(q)) out.push(h('li', {}, h('button', { type: 'button', class: 'link', onclick: () => openEquip(e.id) }, e.name), h('small', { class: 'mono' }, e.serie || '')));
       }
       for (const t of PARC.tables) if (t.id.toLowerCase().includes(q)) out.push(h('li', {}, h('button', { type: 'button', class: 'link', onclick: () => openTable(t.id) }, 'Masa ' + t.id)));
+      const qp = q.replace(/^palet\s*/, '').replace(/^6100001987-3-/, '');
+      for (const id of pal.palletIds) if (/^\d{2,4}$/.test(qp) && id.includes(qp)) out.push(h('li', {}, h('button', { type: 'button', class: 'link', onclick: () => openPallet(id) }, 'Palet ' + id), h('small', {}, pal.countsText(pal.pallet(id).counts))));
+      const info = /^\d{6}$/.test(q) || q.length === 19 ? pal.lookup(q) : null;
+      if (info && !store.snIndex.get(info.serial)) out.push(h('li', {}, h('button', { type: 'button', class: 'link mono', onclick: () => openPallet(info.palet) }, info.six + ' · ' + info.cls), h('small', {}, 'palet ' + info.palet + ', nemontat')));
     }
     results.replaceChildren(...out.slice(0, 60));
     results.hidden = !out.length;
@@ -370,6 +410,7 @@ function openMenu() {
     !store.persistent ? h('div', { class: 'banner' }, 'Browserul nu permite salvarea pe dispozitiv (fereastră privată?). Datele se pierd la închidere.') : null,
     h('div', { class: 'btns' },
       h('button', { type: 'button', onclick: () => { closeSheet(); dataView.open(); armBack(); } }, 'Tabel cu date'),
+      h('button', { type: 'button', onclick: () => { closeSheet(); dataView.open('paleti'); armBack(); } }, 'Paleți'),
       h('button', { type: 'button', onclick: openEquipList }, 'Echipamente'),
       h('button', { type: 'button', onclick: openAddEquip }, 'Adaugă echipament'),
       h('button', { type: 'button', onclick: () => { io.download(io.workbook(), 'Inventar parc ' + io.fileStamp() + '.xlsx'); } }, 'Descarcă Excel')),
@@ -429,6 +470,7 @@ function openHelp() {
     '„Sari” lasă poziția goală (etichetă lipsă sau ilizibilă). „Anulează” șterge ultima scanare și te întoarce la ea.',
     'La capăt de rând auzi două sunete. Atinge primul panou al rândului următor și continuă.',
     'Semnal roșu: seria e deja scanată în alt loc sau poziția e ocupată. Alege „Mută aici” / „Înlocuiește” ori scanează alt panou.',
+    'După fiecare scanare vezi clasa modulului (de ex. 715L = 715 W, curent mic; H = curent mare), paletul din care vine și ce conține paletul. Roșu înseamnă: modul spart, serie care nu e în listă sau clase amestecate pe aceeași masă.',
     'Fără semnal poți scana mai departe. Sus scrie „offline”, iar datele pleacă singure când revine internetul.',
     'Dacă închizi aplicația, „Scanează” te duce înapoi la poziția la care ai rămas.',
   ];
@@ -535,6 +577,7 @@ sync.onStatus((st) => {
 const dataView = createDataView($('dataView'), {
   onPanel: (pid) => { dataView.close(); openPanel(pid); map.showPanel(pid, map.panelScale()); },
   onEquip: (eid) => { dataView.close(); openEquip(eid); },
+  onPallet: (id) => { dataView.close(); openPallet(id); },
 });
 $('dataBtn').addEventListener('click', () => { if (dataView.isOpen) dataView.close(); else { closeSheet(); dataView.open(); armBack(); } });
 $('dvClose').addEventListener('click', () => dataView.close());
@@ -640,6 +683,7 @@ async function startScan(pid, target) {
   closeSheet();
   armBack();
   scan.active = true; scan.target = target || null; scan.history = [];
+  $('modInfo').hidden = true;
   $('scanPanel').hidden = false; $('scanFab').hidden = true;
   clearNotice(); scanMsg('', '');
   updateScanUi();
@@ -667,11 +711,40 @@ function stopScan() {
   if (target) openEquip(target.equipId);
 }
 
+// Caseta din scanare: clasa (putere + intensitate), paletul și ce conține paletul.
+function moduleBox(code, pid) {
+  const box = $('modInfo');
+  const info = pal.lookup(code);
+  if (!info) {
+    box.replaceChildren(h('div', { class: 'warn' }, 'Seria ' + code + ' nu este în lista de paleți. Verifică eticheta.'));
+  } else {
+    const p = pal.pallet(info.palet);
+    const tid = pid ? pid.slice(0, 7) : '';
+    const others = tid ? pal.tableClasses(tid, pid) : {};
+    const mix = Object.keys(others).filter((c) => c !== info.cls);
+    box.replaceChildren(...[
+      h('div', { class: 'top' },
+        h('span', { class: 'cls', style: 'background:' + pal.classColor(info.cls) }, info.cls),
+        h('span', {}, info.clsText)),
+      h('div', {}, h('button', { type: 'button', class: 'link', onclick: () => openPallet(info.palet) }, 'Palet ' + info.palet),
+        ' · ' + pal.countsText(p.counts) + ' · montate ' + p.mounted + '/33'),
+      info.note ? h('div', { class: info.broken || info.separate ? 'warn' : '' }, info.note) : null,
+      mix.length ? h('div', { class: 'warn' }, 'Atenție: pe masa ' + tid + ' sunt deja module ' + mix.join(', ') + '. Clasele nu se amestecă în același string.') : null,
+    ].filter(Boolean));
+  }
+  box.hidden = false;
+  updateInsets();
+  return info;
+}
+
 function place(code, src, movedFrom) {
   const pid = scan.cursor;
   scan.history.push({ pid, prev: store.getSn(pid), movedFrom });
   store.setPanel(pid, code, src);
-  flash('ok'); scanMsg('ok', code + ' → ' + pid);
+  const info = moduleBox(code, pid);
+  const tid = pid.slice(0, 7), mixed = info && Object.keys(pal.tableClasses(tid)).length > 1;
+  if (!info || mixed) { flash('dup'); scanMsg('dup', code + ' → ' + pid + (info ? ' · clase amestecate' : ' · serie necunoscută')); }
+  else { flash('ok'); scanMsg('ok', code + ' → ' + pid + ' · ' + info.cls + ' · palet ' + info.palet); }
   advance();
 }
 function advance() {
@@ -684,9 +757,10 @@ function advance() {
 }
 
 function handleCode(raw, src) {
-  const code = String(raw || '').trim();
+  let code = String(raw || '').trim();
   if (!scan.active || !code) return;
   clearNotice();
+  if (!scan.target) code = pal.normalize(code);         // „000716” tastat devine seria completă
   if (scan.target) {
     store.setEquip(scan.target.equipId, { [scan.target.key]: code });
     flash('ok'); toast(scan.target.label + ': ' + code);
@@ -695,7 +769,13 @@ function handleCode(raw, src) {
   }
   if (!scan.cursor) { flash('dup'); scanMsg('dup', 'Alege mai întâi panoul de start pe hartă.'); scanner.release(); return; }
   const at = store.snIndex.get(code), cur = store.getSn(scan.cursor);
-  if (at === scan.cursor) { flash('ok'); scanMsg('ok', 'Confirmat: ' + code); scan.history.push({ pid: scan.cursor, prev: cur }); advance(); return; }
+  if (at === scan.cursor) { flash('ok'); scanMsg('ok', 'Confirmat: ' + code); moduleBox(code, scan.cursor); scan.history.push({ pid: scan.cursor, prev: cur }); advance(); return; }
+  const info = pal.lookup(code);
+  if (info && info.broken && !at) {
+    flash('dup'); scanMsg('dup', 'Modul spart'); moduleBox(code);
+    notice('Modulul ' + info.six + ' (palet ' + info.palet + ') e marcat SPART — NU se montează.', 'Pune oricum', () => place(code, src));
+    return;
+  }
   if (at) {
     flash('dup'); scanMsg('dup', 'Dublură');
     notice('Codul ' + code + ' este deja la ' + at + '.' + (cur ? ' Seria ' + cur + ' de aici va fi înlocuită.' : ''), 'Mută aici', () => { store.setPanel(at, '', ''); place(code, src, { pid: at, sn: code }); });
@@ -758,9 +838,11 @@ function setMode(mode) {
   map.state.mode = mode;
   $('modeProgres').setAttribute('aria-pressed', String(mode === 'progres'));
   $('modeInv').setAttribute('aria-pressed', String(mode === 'inv'));
+  $('modeCls').setAttribute('aria-pressed', String(mode === 'clase'));
   map.invalidate();
 }
 $('modeProgres').addEventListener('click', () => setMode('progres'));
+$('modeCls').addEventListener('click', () => { setMode('clase'); toast('720L albastru · 715L verde · 710L portocaliu · 710H roșu. Chenar roșu = clase amestecate.'); });
 $('modeInv').addEventListener('click', () => setMode('inv'));
 window.addEventListener('resize', updateInsets);
 
@@ -770,7 +852,7 @@ store.onChange((what) => {
   if (what === 'storage') toast('Atenție: telefonul nu mai poate salva date (memorie plină?). Nu închide aplicația până nu se sincronizează.');
   updateProgress(); map.invalidate();
   const typing = document.activeElement && $('sheet').contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
-  const viewing = current && ['panel', 'table', 'equip', 'equipList', 'menu'].includes(current.kind);
+  const viewing = current && ['panel', 'table', 'equip', 'equipList', 'menu', 'pallet'].includes(current.kind);
   if (what === 'import' || (!typing && what === 'sync' && viewing)
     || (!typing && current && (current.kind === 'panel' || current.kind === 'table') && what === 'panels')) reopen();
   if (io.folderConnected()) {

@@ -67,6 +67,17 @@ GitHub adaugă singur fișierul `docs/CNAME`; nu îl șterge. Pe adresa nouă br
 date goale (stocarea e separată pe fiecare adresă), deci conectează sincronizarea înainte de mutare:
 datele se descarcă singure din depozit.
 
+## Paleți și clasele modulelor
+
+`docs/paleti-data.js` vine din „Lista_4752module_pe_paleti” (4752 de module, 144 de paleți × 33):
+`python3 tools/build_paleti.py Lista_4752module_pe_paleti_rev01.xlsx docs/paleti-data.js`.
+
+La fiecare scanare aplicația arată clasa modulului (720L / 715L / 710L / 710H = puterea și intensitatea:
+L curent mic, H curent mare), paletul și ce conține paletul. Avertizează la module sparte (paletul 0332),
+la serii care nu sunt în listă și când pe aceeași masă (același string) ajung clase diferite.
+Se pot tasta și doar ultimele 6 cifre ale seriei. Harta are modul „Clase”, iar tabelul cu date are fila
+„Paleți” (montate / rămase) și filtrul „De verificat”; Excelul are foaia „Paleți”.
+
 ## Harta și legăturile electrice
 
 `tools/extract_plan.py` citește planul exportat din DWG (PDF vectorial): 4536 de panouri în 162 de

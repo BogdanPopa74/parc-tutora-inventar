@@ -2,6 +2,7 @@
 import { PARC } from '../parc-data.js';
 import * as store from './store.js';
 import { buildXlsx } from './xlsx.js';
+import * as pal from './paleti.js';
 
 export const TYPE_NAMES = { ptab: 'PTAB / STS', inv: 'Invertor', stalp: 'Stâlp iluminat / video', racord: 'Racord 20 kV',
   baterie: 'Baterie', tablou: 'Tablou electric', altul: 'Alt echipament' };
@@ -22,19 +23,25 @@ const pad = (n) => String(n).padStart(2, '0');
 const stamp = (t) => { if (!t) return ''; const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 export const fileStamp = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`; };
 
+function modCols(sn) {
+  if (!sn) return ['', '', ''];
+  const i = pal.lookup(sn);
+  return i ? [i.cls, i.palet, i.note] : ['necunoscută', '', 'Seria nu e în lista de paleți'];
+}
+
 export function workbook() {
-  const panouri = [['Etichetă', 'Rând', 'Masă', 'Nivel', 'Poziție', 'Serie panou', 'Invertor', 'String', 'Scanat la', 'Sursă', 'Scanat de']];
-  const stringuri = [['Masă', 'Rând', 'Invertor', 'String', 'Panouri scanate', 'Total panouri']];
+  const panouri = [['Etichetă', 'Rând', 'Masă', 'Nivel', 'Poziție', 'Serie panou', 'Invertor', 'String', 'Scanat la', 'Sursă', 'Scanat de', 'Clasă', 'Palet', 'Observații palet']];
+  const stringuri = [['Masă', 'Rând', 'Invertor', 'String', 'Panouri scanate', 'Total panouri', 'Clase']];
   for (const base of PARC.tables) {
     const t = store.getTable(base.id);
     const inv = 'INV' + pad(t.inv);
     for (let tier = 0; tier < PARC.tiers; tier++) {
       for (let col = 0; col < PARC.cols; col++) {
         const pid = store.panelId(t.id, tier, col), p = store.panels.get(pid) || {};
-        panouri.push([pid, t.row, t.idx, tier === 0 ? 'Sus' : 'Jos', col + 1, p.sn || '', inv, t.str, p.sn ? stamp(p.t) : '', p.sn ? (p.src || '') : '', p.sn ? (p.by || '') : '']);
+        panouri.push([pid, t.row, t.idx, tier === 0 ? 'Sus' : 'Jos', col + 1, p.sn || '', inv, t.str, p.sn ? stamp(p.t) : '', p.sn ? (p.src || '') : '', p.sn ? (p.by || '') : '', ...modCols(p.sn)]);
       }
     }
-    stringuri.push([t.id, t.row, inv, t.str, store.tableProgress(t.id), PARC.cols * PARC.tiers]);
+    stringuri.push([t.id, t.row, inv, t.str, store.tableProgress(t.id), PARC.cols * PARC.tiers, pal.countsText(pal.tableClasses(t.id))]);
   }
   const echip = [['Nume', 'Tip', 'Câmp', 'Valoare']];
   for (const e of store.listEquip()) {
@@ -49,7 +56,12 @@ export function workbook() {
     if (!rows.length) rows.push(['', '']);
     for (const [k, v] of rows) echip.push([e.name, TYPE_NAMES[e.type] || e.type, k, v]);
   }
-  return buildXlsx([{ name: 'Panouri', rows: panouri }, { name: 'Stringuri', rows: stringuri }, { name: 'Echipamente', rows: echip }]);
+  const paleti = [['Palet', 'Palet (număr complet)', 'Conține', 'Montate', 'Mese', 'Observații']];
+  for (const id of pal.palletIds) {
+    const p = pal.pallet(id);
+    paleti.push([id, p.full, pal.countsText(p.counts), p.mounted, [...new Set(p.mods.filter((m) => m.pid).map((m) => m.pid.slice(0, 7)))].join(', '), p.note]);
+  }
+  return buildXlsx([{ name: 'Panouri', rows: panouri }, { name: 'Stringuri', rows: stringuri }, { name: 'Paleți', rows: paleti }, { name: 'Echipamente', rows: echip }]);
 }
 
 export function download(blob, name) {
