@@ -203,3 +203,6 @@ textarea { min-height: 72px; resize: vertical; }
 @media (min-width: 900px) { #scanPanel.detect { bottom: auto; } }
 body.detecting .zoomctl, body.detecting .mapctl { display: none; }
 #scanPanel.detect .viewer { height: 42vh; }
+/* Elementele din fișă și din tabel își păstrează înălțimea; se derulează containerul, nu se strâng listele. */
+#sheetBody > *, #dvBody > * { flex-shrink: 0; }
+#sheet.tall { max-height: 88%; }

@@ -131,6 +131,7 @@ function openSheet(title, nodes, sel) {
   body.replaceChildren(...nodes.flat().filter(Boolean));
   body.scrollTop = scroll;
   $('sheet').hidden = false;
+  $('sheet').classList.toggle('tall', !!(sel && ['pallet', 'equip', 'menu', 'help'].includes(sel.kind)));
   document.body.classList.add('sheet-open');
   current = sel || null;
   map.state.selected = sel && ['panel', 'table', 'equip'].includes(sel.kind) ? sel : null;
