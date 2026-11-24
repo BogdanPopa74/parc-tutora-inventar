@@ -50,7 +50,9 @@ function confirmButton(label, sure, action) {
 
 // ---- Hartă -------------------------------------------------------------------
 const map = createMap($('map'), onMapTap);
-const scanner = createScanner({ video: $('video'), overlay: $('overlay'), viewer: $('viewer') }, (code) => handleCode(code, 'cameră'));
+const scanner = createScanner({ video: $('video'), overlay: $('overlay'), viewer: $('viewer'),
+  onReleased: () => { stopCamera(); $('camMsg').textContent = 'Camera a fost preluată de altă fereastră a aplicației. Apasă „Pornește camera” ca s-o folosești aici.'; } },
+(code) => handleCode(code, 'cameră'));
 let current = null;                 // fișa deschisă: { kind, id }
 let placing = null;                 // plasare echipament pe hartă: { type, name } sau { moveId }
 let assign = null;                  // atribuire de mese unui invertor: { n, eid, count }
@@ -661,10 +663,10 @@ function updateScanUi() {
   $('orderBtn').textContent = scan.order === 'col' ? 'Sus-jos' : 'Pe rând';
 }
 
-async function startCamera() {
+async function startCamera(camId) {
   if ($('camStart').disabled) return;
   $('camStart').disabled = true;
-  const res = await scanner.start();
+  const res = typeof camId === 'string' ? await scanner.useCamera(camId) : await scanner.start();
   $('camStart').disabled = false;
   if (res.cancelled || !scan.active) return;
   if (!res.ok) { $('camMsg').textContent = res.error; $('idle').hidden = false; $('reticle').hidden = true; return; }
@@ -914,7 +916,7 @@ $('photoInput').addEventListener('change', async () => {
   if (codes.length > 1) toast('În poză erau ' + codes.length + ' coduri; l-am luat pe cel din mijloc.');
 });
 $('detectFab').addEventListener('click', startDetect);
-$('camStart').addEventListener('click', startCamera);
+$('camStart').addEventListener('click', () => startCamera());
 $('scanManual').addEventListener('submit', (e) => {
   e.preventDefault();
   const input = $('scanInput');
@@ -938,6 +940,15 @@ $('undoBtn').addEventListener('click', () => {
   setCursor(last.pid);
   scanMsg('', 'Anulat. Ești din nou la ' + last.pid + '.');
   scanner.release();
+});
+$('camSwitch').addEventListener('click', async () => {
+  const cams = await scanner.cameras();
+  if (cams.length < 2) { toast('Telefonul arată o singură cameră'); return; }
+  const cur = scanner.currentCamera(), i = cams.findIndex((c) => c.deviceId === cur);
+  const next = cams[(i + 1) % cams.length];
+  toast('Camera: ' + (next.label || 'camera ' + ((i + 1) % cams.length + 1)));
+  stopCamera();
+  await startCamera(next.deviceId);
 });
 $('torchBtn').addEventListener('click', async () => {
   const btn = $('torchBtn'), on = btn.getAttribute('aria-pressed') !== 'true';

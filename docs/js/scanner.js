@@ -171,7 +171,43 @@ export function createScanner(els, onCode) {
     else setTimeout(tick, 60);
   }
 
+  // Dacă aplicația e deschisă de două ori (tab în Chrome + aplicația instalată), camera poate fi
+  // ținută de cealaltă fereastră. Fereastra care pornește camera le cere celorlalte s-o elibereze.
+  const chan = 'BroadcastChannel' in window ? new BroadcastChannel('parc-camera') : null;
+  const me = Math.random().toString(36).slice(2);
+  function claimCamera() { if (chan) chan.postMessage({ claim: me }); }
+  if (chan) chan.onmessage = (ev) => { if (ev.data && ev.data.claim !== me && running) { stop(); if (els.onReleased) els.onReleased(); } };
+  window.addEventListener('pagehide', () => stop());
+
   let gen = 0;                                      // o pornire depășită de o oprire se anulează
+  // Deschide camera încercând pe rând variante tot mai simple. Pe unele telefoane Samsung
+  // „Could not start video source” apare la cerințe de rezoluție sau la o anumită cameră din spate.
+  async function openCamera(deviceId) {
+    const gum = (video) => navigator.mediaDevices.getUserMedia({ audio: false, video });
+    const hd = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+    const tries = [];
+    if (deviceId) tries.push({ ...hd, deviceId: { exact: deviceId } }, { deviceId: { exact: deviceId } });
+    tries.push({ ...hd, facingMode: { ideal: 'environment' } }, { facingMode: { ideal: 'environment' } },
+      { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' });
+    let lastErr = null;
+    for (let i = 0; i < tries.length; i++) {
+      try { return { stream: await gum(tries[i]), fallback: i > 0 }; } catch (e) {
+        lastErr = e;
+        if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) return { error: e };
+        if (e && e.name === 'NotReadableError') { claimCamera(); await new Promise((r) => setTimeout(r, 600)); }   // camera ținută de alt tab: îl rugăm să o elibereze
+      }
+    }
+    // la final: fiecare cameră din spate pe rând, apoi orice cameră
+    try {
+      const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+      const back = cams.filter((d) => /back|rear|spate|environment/i.test(d.label));
+      for (const d of [...back, ...cams.filter((c) => !back.includes(c))]) {
+        try { return { stream: await gum({ deviceId: { exact: d.deviceId } }), fallback: true }; } catch (e) { lastErr = e; }
+      }
+      return { stream: await gum(true) };
+    } catch (e) { return { error: lastErr || e }; }
+  }
+
   async function start(deviceId) {
     stop();
     const my = gen;
@@ -179,16 +215,18 @@ export function createScanner(els, onCode) {
     if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       return { ok: false, error: 'Camera merge doar pe o adresă HTTPS.' };
     }
-    const base = { width: { ideal: 1920 }, height: { ideal: 1080 } };
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: false,
-        video: deviceId ? { ...base, deviceId: { exact: deviceId } } : { ...base, facingMode: { ideal: 'environment' } } });
-    } catch (e) {
-      if (deviceId) return start('');
+    claimCamera();
+    const got = await openCamera(deviceId === undefined ? localStorageGet('camId') || '' : deviceId);
+    if (got.error) {
+      const e = got.error;
       return { ok: false, error: e && e.name === 'NotAllowedError'
         ? 'Camera e blocată. Apasă pe lacătul din bara de adrese → Permisiuni → Cameră → Permite.'
-        : 'Camera nu a pornit: ' + (e && e.message || e) };
+        : e && e.name === 'NotReadableError'
+          ? 'Camera e folosită de altă aplicație sau de alt tab. Închide aplicația Cameră, apelurile video și celelalte ferestre cu această aplicație (și din Chrome, și cea instalată), apoi apasă din nou „Pornește camera”. Dacă tot nu merge, repornește telefonul.'
+          : 'Camera nu a pornit: ' + (e && e.message || e) };
     }
+    stream = got.stream;
+    if (got.fallback) { try { localStorageSet('camId', stream.getVideoTracks()[0].getSettings().deviceId || ''); } catch (e) { /* opțional */ } }
     if (my !== gen) { for (const t of stream.getTracks()) t.stop(); stream = null; return { ok: false, cancelled: true }; }
     video.srcObject = stream;
     try { await video.play(); } catch (e) { /* pornește la următorul gest */ }
@@ -246,6 +284,11 @@ export function createScanner(els, onCode) {
     get running() { return running; },
     release() { held = { code: null, seen: 0 }; },      // permite recitirea imediată a aceluiași cod
     async setTorch(on) { if (!track) return false; try { await track.applyConstraints({ advanced: [{ torch: on }] }); return true; } catch (e) { return false; } },
+    async cameras() {
+      try { return (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput'); } catch (e) { return []; }
+    },
+    currentCamera() { return track && track.getSettings ? track.getSettings().deviceId || '' : ''; },
+    async useCamera(id) { localStorageSet('camId', id || ''); return start(id || ''); },
     setZoom(z) { localStorageSet('camZoom', z); if (track) track.applyConstraints({ advanced: [{ zoom: Number(z) }] }).catch(() => {}); },
     // Atingere pe imagine: refocalizare pe punctul atins (unde telefonul permite).
     focusAt(fx, fy) {
